@@ -1,0 +1,52 @@
+{
+  "name": "Math Chain",
+  "description": "Square then double a number",
+  "nodes": [
+    {
+      "id": "number_input-1",
+      "type": "custom",
+      "position": { "x": 50, "y": 100 },
+      "data": {
+        "label": "number_input",
+        "inputs": { "value": { "type": "int" } },
+        "outputs": { "out": { "type": "int" }, "status": { "type": "str" } }
+      }
+    },
+    {
+      "id": "square-1",
+      "type": "custom",
+      "position": { "x": 300, "y": 100 },
+      "data": {
+        "label": "square",
+        "inputs": { "value": { "type": "int" } },
+        "outputs": { "result": { "type": "int" } }
+      }
+    },
+    {
+      "id": "double-1",
+      "type": "custom",
+      "position": { "x": 520, "y": 100 },
+      "data": {
+        "label": "double",
+        "inputs": { "value": { "type": "int" } },
+        "outputs": { "result": { "type": "int" }, "status": { "type": "str" } }
+      }
+    },
+    {
+      "id": "display_number-1",
+      "type": "custom",
+      "position": { "x": 750, "y": 100 },
+      "data": {
+        "label": "display_number",
+        "inputs": { "value": { "type": "int" } },
+        "outputs": { "output": { "type": "str" } }
+      }
+    }
+  ],
+  "edges": [
+    { "id": "e1", "source": "number_input-1", "target": "square-1", "sourceHandle": "out", "targetHandle": "value" },
+    { "id": "e2", "source": "square-1", "target": "double-1", "sourceHandle": "result", "targetHandle": "value" },
+    { "id": "e3", "source": "double-1", "target": "display_number-1", "sourceHandle": "result", "targetHandle": "value" }
+  ]
+}
+

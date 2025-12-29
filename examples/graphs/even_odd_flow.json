@@ -1,0 +1,64 @@
+{
+  "name": "Even/Odd Number Flow",
+  "description": "Doubles even numbers, triples odd numbers",
+  "nodes": [
+    {
+      "id": "number_input-1",
+      "type": "custom",
+      "position": { "x": 50, "y": 150 },
+      "data": {
+        "label": "number_input",
+        "inputs": { "value": { "type": "int" } },
+        "outputs": { "out": { "type": "int" }, "status": { "type": "str" } }
+      }
+    },
+    {
+      "id": "is_even-1",
+      "type": "custom",
+      "position": { "x": 300, "y": 150 },
+      "data": {
+        "label": "is_even",
+        "inputs": { "value": { "type": "int" } },
+        "outputs": { "yes": { "type": "int" }, "no": { "type": "int" }, "status": { "type": "str" } }
+      }
+    },
+    {
+      "id": "double-1",
+      "type": "custom",
+      "position": { "x": 550, "y": 50 },
+      "data": {
+        "label": "double",
+        "inputs": { "value": { "type": "int" } },
+        "outputs": { "result": { "type": "int" }, "status": { "type": "str" } }
+      }
+    },
+    {
+      "id": "triple-1",
+      "type": "custom",
+      "position": { "x": 550, "y": 250 },
+      "data": {
+        "label": "triple",
+        "inputs": { "value": { "type": "int" } },
+        "outputs": { "result": { "type": "int" }, "status": { "type": "str" } }
+      }
+    },
+    {
+      "id": "display_number-1",
+      "type": "custom",
+      "position": { "x": 800, "y": 150 },
+      "data": {
+        "label": "display_number",
+        "inputs": { "value": { "type": "int" } },
+        "outputs": { "output": { "type": "str" } }
+      }
+    }
+  ],
+  "edges": [
+    { "id": "e1", "source": "number_input-1", "target": "is_even-1", "sourceHandle": "out", "targetHandle": "value" },
+    { "id": "e2", "source": "is_even-1", "target": "double-1", "sourceHandle": "yes", "targetHandle": "value" },
+    { "id": "e3", "source": "is_even-1", "target": "triple-1", "sourceHandle": "no", "targetHandle": "value" },
+    { "id": "e4", "source": "double-1", "target": "display_number-1", "sourceHandle": "result", "targetHandle": "value" },
+    { "id": "e5", "source": "triple-1", "target": "display_number-1", "sourceHandle": "result", "targetHandle": "value" }
+  ]
+}
+
