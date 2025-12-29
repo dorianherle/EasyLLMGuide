@@ -1,4 +1,8 @@
-import asyncio
+"""
+Minimalist executor - no EVENT/DATA distinction.
+All yields are just (branch, value).
+"""
+
 import inspect
 from collections import deque
 from typing import Any
@@ -11,13 +15,19 @@ from core.logging_setup import logger
 from core.spec_models import NodeSpec
 
 
+# Special node types that interact with terminal
+TERMINAL_READ_NODES = ['terminal_read_int', 'terminal_read_str']
+TERMINAL_WRITE_NODES = ['terminal_write']
+LOGGER_NODES = ['logger']
+
+
 class Executor:
     def __init__(self, graph: nx.MultiDiGraph, observers: list = None):
         self.graph = graph
         self.observers = observers or []
         self.input_queues: dict[tuple[str, str], deque] = {}
         self.running: dict[str, int] = {}
-        self.scheduled: set[str] = set()  # Track scheduled nodes
+        self.scheduled: set[str] = set()
         self.max_concurrency_per_node = 1
         
     def _init_queues(self):
@@ -40,7 +50,6 @@ class Executor:
                 self.input_queues[(node_id, input_name)].append(value)
     
     def _is_ready(self, node_id: str) -> bool:
-        # Not ready if already running or scheduled
         if self.running[node_id] >= self.max_concurrency_per_node:
             return False
         if node_id in self.scheduled:
@@ -76,59 +85,81 @@ class Executor:
         for target_node, target_input in downstream:
             self.input_queues[(target_node, target_input)].append(value)
     
+    def _get_node_type(self, node_id: str) -> str:
+        """Get the original node type name from instance ID."""
+        spec: NodeSpec = self.graph.nodes[node_id]["spec"]
+        return spec.func.__name__
+    
     async def _run_node(self, node_id: str, task_group: anyio.abc.TaskGroup):
-        # Mark as running, remove from scheduled
         self.scheduled.discard(node_id)
         self.running[node_id] += 1
         
         spec: NodeSpec = self.graph.nodes[node_id]["spec"]
         args = self._pop_inputs(node_id)
+        node_type = self._get_node_type(node_id)
         
-        logger.info("node_start", node_id=node_id)
-        await self._notify("node_start", {"node_id": node_id, "args": args})
-        
-        func = spec.func
+        logger.info("node_start", node_id=node_id, node_type=node_type)
+        await self._notify("node_start", {"node_id": node_id, "node_type": node_type})
         
         try:
+            func = spec.func
+            
             if inspect.isasyncgenfunction(func):
-                async for branch, value, kind in func(**args):
-                    if kind == "DATA":
-                        logger.info("node_yield_data", node_id=node_id, branch=branch)
-                        await self._notify("node_yield_data", {"node_id": node_id, "branch": branch, "value": value})
-                        await self._route_output(node_id, branch, value)
-                        self._schedule_ready(task_group)
-                    elif kind == "EVENT":
-                        logger.info("node_yield_event", node_id=node_id, branch=branch, value=value)
-                        await self._notify("node_yield_event", {"node_id": node_id, "branch": branch, "value": value})
+                async for item in func(**args):
+                    # Support both (branch, value) and (branch, value, kind) for backwards compat
+                    if len(item) == 2:
+                        branch, value = item
+                    else:
+                        branch, value, _ = item  # Ignore kind
+                    
+                    await self._handle_output(node_id, node_type, branch, value, task_group)
+                    
             elif inspect.iscoroutinefunction(func):
                 result = await func(**args)
                 if result:
                     items = result if isinstance(result, list) else [result]
-                    for branch, value, kind in items:
-                        if kind == "DATA":
-                            logger.info("node_yield_data", node_id=node_id, branch=branch)
-                            await self._notify("node_yield_data", {"node_id": node_id, "branch": branch, "value": value})
-                            await self._route_output(node_id, branch, value)
-                        elif kind == "EVENT":
-                            logger.info("node_yield_event", node_id=node_id, branch=branch, value=value)
-                            await self._notify("node_yield_event", {"node_id": node_id, "branch": branch, "value": value})
+                    for item in items:
+                        if len(item) == 2:
+                            branch, value = item
+                        else:
+                            branch, value, _ = item
+                        await self._handle_output(node_id, node_type, branch, value, task_group)
             else:
                 result = func(**args)
                 if result:
                     items = result if isinstance(result, list) else [result]
-                    for branch, value, kind in items:
-                        if kind == "DATA":
-                            logger.info("node_yield_data", node_id=node_id, branch=branch)
-                            await self._notify("node_yield_data", {"node_id": node_id, "branch": branch, "value": value})
-                            await self._route_output(node_id, branch, value)
-                        elif kind == "EVENT":
-                            logger.info("node_yield_event", node_id=node_id, branch=branch, value=value)
-                            await self._notify("node_yield_event", {"node_id": node_id, "branch": branch, "value": value})
+                    for item in items:
+                        if len(item) == 2:
+                            branch, value = item
+                        else:
+                            branch, value, _ = item
+                        await self._handle_output(node_id, node_type, branch, value, task_group)
+                        
+        except Exception as e:
+            logger.error("node_error", node_id=node_id, error=str(e))
+            await self._notify("node_error", {"node_id": node_id, "error": str(e)})
         finally:
             self.running[node_id] -= 1
             logger.info("node_done", node_id=node_id)
             await self._notify("node_done", {"node_id": node_id})
             self._schedule_ready(task_group)
+    
+    async def _handle_output(self, node_id: str, node_type: str, branch: str, value: Any, task_group):
+        """Handle node output - route to downstream or notify for terminal/logger."""
+        
+        # Check if this is a terminal write
+        if node_type in TERMINAL_WRITE_NODES:
+            await self._notify("terminal_write", {"node_id": node_id, "value": value})
+        
+        # Check if this is a logger
+        if node_type in LOGGER_NODES:
+            await self._notify("log", {"node_id": node_id, "value": value})
+        
+        # Always route to downstream nodes
+        logger.info("node_output", node_id=node_id, branch=branch)
+        await self._notify("node_output", {"node_id": node_id, "branch": branch, "value": value})
+        await self._route_output(node_id, branch, value)
+        self._schedule_ready(task_group)
     
     def _schedule_ready(self, task_group: anyio.abc.TaskGroup):
         for node_id in self._get_ready_nodes():

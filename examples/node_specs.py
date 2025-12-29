@@ -1,6 +1,6 @@
 """
 Node specifications for the example nodes.
-These define the inputs, outputs, and types for each node.
+Minimalist design - no EVENT, everything is DATA.
 """
 
 from core.spec_models import NodeSpec, InputDef, OutputDef
@@ -8,25 +8,27 @@ from examples import basic_nodes
 
 
 EXAMPLE_NODES = [
-    # Input nodes
+    # Terminal output node
     NodeSpec(
-        name="number_input",
-        inputs={"value": InputDef(type=int)},
-        outputs={"out": OutputDef(type=int), "status": OutputDef(type=str)},
-        func=basic_nodes.number_input
-    ),
-    NodeSpec(
-        name="text_input",
+        name="terminal_write",
         inputs={"value": InputDef(type=str)},
-        outputs={"out": OutputDef(type=str)},
-        func=basic_nodes.text_input
+        outputs={"done": OutputDef(type=str)},
+        func=basic_nodes.terminal_write
+    ),
+    
+    # Logger node
+    NodeSpec(
+        name="logger",
+        inputs={"msg": InputDef(type=str)},
+        outputs={"logged": OutputDef(type=str)},
+        func=basic_nodes.logger
     ),
     
     # Math nodes
     NodeSpec(
         name="add",
         inputs={"a": InputDef(type=int), "b": InputDef(type=int)},
-        outputs={"result": OutputDef(type=int), "status": OutputDef(type=str)},
+        outputs={"result": OutputDef(type=int)},
         func=basic_nodes.add
     ),
     NodeSpec(
@@ -38,13 +40,13 @@ EXAMPLE_NODES = [
     NodeSpec(
         name="double",
         inputs={"value": InputDef(type=int)},
-        outputs={"result": OutputDef(type=int), "status": OutputDef(type=str)},
+        outputs={"result": OutputDef(type=int)},
         func=basic_nodes.double
     ),
     NodeSpec(
         name="triple",
         inputs={"value": InputDef(type=int)},
-        outputs={"result": OutputDef(type=int), "status": OutputDef(type=str)},
+        outputs={"result": OutputDef(type=int)},
         func=basic_nodes.triple
     ),
     NodeSpec(
@@ -53,12 +55,18 @@ EXAMPLE_NODES = [
         outputs={"result": OutputDef(type=int)},
         func=basic_nodes.square
     ),
+    NodeSpec(
+        name="negate",
+        inputs={"value": InputDef(type=int)},
+        outputs={"result": OutputDef(type=int)},
+        func=basic_nodes.negate
+    ),
     
     # Branching nodes
     NodeSpec(
         name="is_even",
         inputs={"value": InputDef(type=int)},
-        outputs={"yes": OutputDef(type=int), "no": OutputDef(type=int), "status": OutputDef(type=str)},
+        outputs={"yes": OutputDef(type=int), "no": OutputDef(type=int)},
         func=basic_nodes.is_even
     ),
     NodeSpec(
@@ -82,10 +90,10 @@ EXAMPLE_NODES = [
         func=basic_nodes.to_string
     ),
     NodeSpec(
-        name="format_result",
-        inputs={"value": InputDef(type=int)},
+        name="format_text",
+        inputs={"template": InputDef(type=str, default="Value: {}"), "value": InputDef(type=int)},
         outputs={"result": OutputDef(type=str)},
-        func=basic_nodes.format_result
+        func=basic_nodes.format_text
     ),
     NodeSpec(
         name="concat",
@@ -94,32 +102,24 @@ EXAMPLE_NODES = [
         func=basic_nodes.concat
     ),
     
-    # Output nodes
-    NodeSpec(
-        name="display",
-        inputs={"value": InputDef(type=str)},
-        outputs={"output": OutputDef(type=str), "status": OutputDef(type=str)},
-        func=basic_nodes.display
-    ),
-    NodeSpec(
-        name="display_number",
-        inputs={"value": InputDef(type=int)},
-        outputs={"output": OutputDef(type=str)},
-        func=basic_nodes.display_number
-    ),
-    
     # Utility nodes
     NodeSpec(
         name="delay",
-        inputs={"value": InputDef(type=int)},
-        outputs={"out": OutputDef(type=int), "status": OutputDef(type=str)},
+        inputs={"value": InputDef(type=int), "seconds": InputDef(type=float, default=0.5)},
+        outputs={"out": OutputDef(type=int)},
         func=basic_nodes.delay
     ),
     NodeSpec(
-        name="log",
+        name="passthrough",
         inputs={"value": InputDef(type=int)},
-        outputs={"out": OutputDef(type=int), "status": OutputDef(type=str)},
-        func=basic_nodes.log
+        outputs={"out": OutputDef(type=int)},
+        func=basic_nodes.passthrough
+    ),
+    NodeSpec(
+        name="constant",
+        inputs={"value": InputDef(type=int)},
+        outputs={"out": OutputDef(type=int)},
+        func=basic_nodes.constant
     ),
 ]
 
@@ -129,4 +129,3 @@ def get_node_by_name(name: str) -> NodeSpec | None:
         if node.name == name:
             return node
     return None
-

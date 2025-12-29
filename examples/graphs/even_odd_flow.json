@@ -1,64 +1,21 @@
 {
-  "name": "Even/Odd Number Flow",
-  "description": "Doubles even numbers, triples odd numbers",
+  "name": "Even/Odd Flow",
+  "description": "Checks if input is even/odd, doubles or triples, then outputs to terminal",
   "nodes": [
-    {
-      "id": "number_input-1",
-      "type": "custom",
-      "position": { "x": 50, "y": 150 },
-      "data": {
-        "label": "number_input",
-        "inputs": { "value": { "type": "int" } },
-        "outputs": { "out": { "type": "int" }, "status": { "type": "str" } }
-      }
-    },
-    {
-      "id": "is_even-1",
-      "type": "custom",
-      "position": { "x": 300, "y": 150 },
-      "data": {
-        "label": "is_even",
-        "inputs": { "value": { "type": "int" } },
-        "outputs": { "yes": { "type": "int" }, "no": { "type": "int" }, "status": { "type": "str" } }
-      }
-    },
-    {
-      "id": "double-1",
-      "type": "custom",
-      "position": { "x": 550, "y": 50 },
-      "data": {
-        "label": "double",
-        "inputs": { "value": { "type": "int" } },
-        "outputs": { "result": { "type": "int" }, "status": { "type": "str" } }
-      }
-    },
-    {
-      "id": "triple-1",
-      "type": "custom",
-      "position": { "x": 550, "y": 250 },
-      "data": {
-        "label": "triple",
-        "inputs": { "value": { "type": "int" } },
-        "outputs": { "result": { "type": "int" }, "status": { "type": "str" } }
-      }
-    },
-    {
-      "id": "display_number-1",
-      "type": "custom",
-      "position": { "x": 800, "y": 150 },
-      "data": {
-        "label": "display_number",
-        "inputs": { "value": { "type": "int" } },
-        "outputs": { "output": { "type": "str" } }
-      }
-    }
+    { "id": "const-1", "type": "custom", "position": { "x": 50, "y": 150 }, "data": { "label": "constant", "inputs": { "value": { "type": "int" } }, "outputs": { "out": { "type": "int" } } } },
+    { "id": "check-1", "type": "custom", "position": { "x": 260, "y": 150 }, "data": { "label": "is_even", "inputs": { "value": { "type": "int" } }, "outputs": { "yes": { "type": "int" }, "no": { "type": "int" } } } },
+    { "id": "double-1", "type": "custom", "position": { "x": 480, "y": 50 }, "data": { "label": "double", "inputs": { "value": { "type": "int" } }, "outputs": { "result": { "type": "int" } } } },
+    { "id": "triple-1", "type": "custom", "position": { "x": 480, "y": 250 }, "data": { "label": "triple", "inputs": { "value": { "type": "int" } }, "outputs": { "result": { "type": "int" } } } },
+    { "id": "fmt-1", "type": "custom", "position": { "x": 700, "y": 150 }, "data": { "label": "format_text", "inputs": { "template": { "type": "str" }, "value": { "type": "int" } }, "outputs": { "result": { "type": "str" } } } },
+    { "id": "term-1", "type": "custom", "position": { "x": 920, "y": 150 }, "data": { "label": "terminal_write", "inputs": { "value": { "type": "str" } }, "outputs": { "done": { "type": "str" } } } }
   ],
   "edges": [
-    { "id": "e1", "source": "number_input-1", "target": "is_even-1", "sourceHandle": "out", "targetHandle": "value" },
-    { "id": "e2", "source": "is_even-1", "target": "double-1", "sourceHandle": "yes", "targetHandle": "value" },
-    { "id": "e3", "source": "is_even-1", "target": "triple-1", "sourceHandle": "no", "targetHandle": "value" },
-    { "id": "e4", "source": "double-1", "target": "display_number-1", "sourceHandle": "result", "targetHandle": "value" },
-    { "id": "e5", "source": "triple-1", "target": "display_number-1", "sourceHandle": "result", "targetHandle": "value" }
-  ]
+    { "id": "e1", "source": "const-1", "target": "check-1", "sourceHandle": "out", "targetHandle": "value" },
+    { "id": "e2", "source": "check-1", "target": "double-1", "sourceHandle": "yes", "targetHandle": "value" },
+    { "id": "e3", "source": "check-1", "target": "triple-1", "sourceHandle": "no", "targetHandle": "value" },
+    { "id": "e4", "source": "double-1", "target": "fmt-1", "sourceHandle": "result", "targetHandle": "value" },
+    { "id": "e5", "source": "triple-1", "target": "fmt-1", "sourceHandle": "result", "targetHandle": "value" },
+    { "id": "e6", "source": "fmt-1", "target": "term-1", "sourceHandle": "result", "targetHandle": "value" }
+  ],
+  "subgraphs": []
 }
-

@@ -45,7 +45,6 @@ function FlowEditor({ nodes, setNodes, edges, setEdges, onNodeSelect, subgraphs,
     changes.forEach(change => {
       if (change.type === 'position' && change.position && !change.dragging) {
         if (editingSubgraphId) {
-          // Update subgraph's internal nodes
           setSubgraphs(prev => prev.map(s => 
             s.id === editingSubgraphId 
               ? { ...s, nodes: s.nodes.map(n => n.id === change.id ? { ...n, position: change.position } : n) }
@@ -119,6 +118,92 @@ function FlowEditor({ nodes, setNodes, edges, setEdges, onNodeSelect, subgraphs,
     setSelectedIds(new Set())
   }, [])
 
+  // Define these BEFORE onNodeContextMenu since they're used in its dependency array
+  const handleDeleteNode = useCallback((nodeId) => {
+    if (editingSubgraphId) {
+      setSubgraphs(prev => prev.map(s => 
+        s.id === editingSubgraphId ? { ...s, nodes: s.nodes.filter(n => n.id !== nodeId) } : s
+      ))
+    } else {
+      setNodes(prev => prev.filter(n => n.id !== nodeId))
+    }
+  }, [setNodes, editingSubgraphId, setSubgraphs])
+
+  const handleExpandSubgraph = useCallback((node) => {
+    console.log('[Expand] Starting expand for node:', node.id)
+    console.log('[Expand] Available subgraphs:', subgraphs)
+    
+    const subgraph = subgraphs?.find(s => s.id === node.id)
+    if (!subgraph) {
+      console.error('[Expand] Subgraph not found for id:', node.id)
+      return
+    }
+    if (!subgraph.nodes?.length) {
+      console.error('[Expand] Subgraph has no nodes')
+      return
+    }
+    
+    console.log('[Expand] Found subgraph:', subgraph)
+
+    // Calculate position offset to place nodes where the subgraph was
+    const avgX = subgraph.nodes.reduce((sum, n) => sum + n.position.x, 0) / subgraph.nodes.length
+    const avgY = subgraph.nodes.reduce((sum, n) => sum + n.position.y, 0) / subgraph.nodes.length
+    const offsetX = node.position.x - avgX
+    const offsetY = node.position.y - avgY
+
+    // Remove subgraph node, add back internal nodes
+    const newNodes = nodes.filter(n => n.id !== node.id)
+    subgraph.nodes.forEach(n => {
+      newNodes.push({ 
+        ...n, 
+        position: { x: n.position.x + offsetX, y: n.position.y + offsetY } 
+      })
+    })
+    
+    // Keep edges not connected to subgraph, add back internal edges
+    const newEdges = edges.filter(e => e.source !== node.id && e.target !== node.id)
+    ;(subgraph.edges || []).forEach(e => newEdges.push({ ...e, id: `e-${Date.now()}-${Math.random()}` }))
+    
+    // Reconnect external edges to the original internal nodes
+    edges.forEach(e => {
+      if (e.target === node.id && e.targetHandle) {
+        const lastUnderscore = e.targetHandle.lastIndexOf('_')
+        if (lastUnderscore > 0) {
+          const origNode = e.targetHandle.substring(0, lastUnderscore)
+          const origHandle = e.targetHandle.substring(lastUnderscore + 1)
+          newEdges.push({ 
+            id: `e-${Date.now()}-${Math.random()}`, 
+            source: e.source, 
+            sourceHandle: e.sourceHandle, 
+            target: origNode, 
+            targetHandle: origHandle 
+          })
+        }
+      }
+      if (e.source === node.id && e.sourceHandle) {
+        const lastUnderscore = e.sourceHandle.lastIndexOf('_')
+        if (lastUnderscore > 0) {
+          const origNode = e.sourceHandle.substring(0, lastUnderscore)
+          const origHandle = e.sourceHandle.substring(lastUnderscore + 1)
+          newEdges.push({ 
+            id: `e-${Date.now()}-${Math.random()}`, 
+            source: origNode, 
+            sourceHandle: origHandle, 
+            target: e.target, 
+            targetHandle: e.targetHandle 
+          })
+        }
+      }
+    })
+    
+    console.log('[Expand] New nodes:', newNodes.length, 'New edges:', newEdges.length)
+    
+    setNodes(newNodes)
+    setEdges(newEdges)
+    setSubgraphs(prev => prev.filter(s => s.id !== node.id))
+  }, [nodes, edges, subgraphs, setNodes, setEdges, setSubgraphs])
+
+  // Now define onNodeContextMenu AFTER the functions it depends on
   const onNodeContextMenu = useCallback((event, node) => {
     event.preventDefault()
     const items = []
@@ -133,7 +218,18 @@ function FlowEditor({ nodes, setNodes, edges, setEdges, onNodeSelect, subgraphs,
     
     items.push({ label: 'Delete', icon: '🗑️', action: () => handleDeleteNode(node.id) })
     setContextMenu({ x: event.clientX, y: event.clientY, items })
-  }, [])
+  }, [handleExpandSubgraph, handleDeleteNode])
+
+  const deleteSelected = useCallback(() => {
+    if (editingSubgraphId) {
+      setSubgraphs(prev => prev.map(s => 
+        s.id === editingSubgraphId ? { ...s, nodes: s.nodes.filter(n => !selectedIds.has(n.id)) } : s
+      ))
+    } else {
+      setNodes(prev => prev.filter(n => !selectedIds.has(n.id)))
+    }
+    setSelectedIds(new Set())
+  }, [selectedIds, setNodes, editingSubgraphId, setSubgraphs])
 
   const onPaneContextMenu = useCallback((event) => {
     event.preventDefault()
@@ -148,28 +244,7 @@ function FlowEditor({ nodes, setNodes, edges, setEdges, onNodeSelect, subgraphs,
         ]
       })
     }
-  }, [selectedIds, editingSubgraphId])
-
-  const handleDeleteNode = useCallback((nodeId) => {
-    if (editingSubgraphId) {
-      setSubgraphs(prev => prev.map(s => 
-        s.id === editingSubgraphId ? { ...s, nodes: s.nodes.filter(n => n.id !== nodeId) } : s
-      ))
-    } else {
-      setNodes(prev => prev.filter(n => n.id !== nodeId))
-    }
-  }, [setNodes, editingSubgraphId, setSubgraphs])
-
-  const deleteSelected = useCallback(() => {
-    if (editingSubgraphId) {
-      setSubgraphs(prev => prev.map(s => 
-        s.id === editingSubgraphId ? { ...s, nodes: s.nodes.filter(n => !selectedIds.has(n.id)) } : s
-      ))
-    } else {
-      setNodes(prev => prev.filter(n => !selectedIds.has(n.id)))
-    }
-    setSelectedIds(new Set())
-  }, [selectedIds, setNodes, editingSubgraphId, setSubgraphs])
+  }, [selectedIds, editingSubgraphId, deleteSelected])
 
   const doCreateSubgraph = useCallback((name) => {
     const selectedNodeData = nodes.filter(n => selectedIds.has(n.id))
@@ -230,38 +305,7 @@ function FlowEditor({ nodes, setNodes, edges, setEdges, onNodeSelect, subgraphs,
     setShowNameDialog(false)
   }, [selectedIds, nodes, edges, setNodes, setEdges, setSubgraphs])
 
-  const handleExpandSubgraph = useCallback((node) => {
-    const subgraph = subgraphs?.find(s => s.id === node.id)
-    if (!subgraph || !subgraph.nodes.length) return
-
-    const offsetX = node.position.x - subgraph.nodes[0].position.x
-    const offsetY = node.position.y - subgraph.nodes[0].position.y
-
-    const newNodes = nodes.filter(n => n.id !== node.id)
-    subgraph.nodes.forEach(n => {
-      newNodes.push({ ...n, position: { x: n.position.x + offsetX, y: n.position.y + offsetY } })
-    })
-    setNodes(newNodes)
-
-    const newEdges = edges.filter(e => e.source !== node.id && e.target !== node.id)
-    ;(subgraph.edges || []).forEach(e => newEdges.push({ ...e }))
-    
-    edges.forEach(e => {
-      if (e.target === node.id) {
-        const parts = e.targetHandle.split('_'); const origHandle = parts.pop(); const origNode = parts.join('_')
-        newEdges.push({ id: `e-${Date.now()}-${Math.random()}`, source: e.source, sourceHandle: e.sourceHandle, target: origNode, targetHandle: origHandle })
-      }
-      if (e.source === node.id) {
-        const parts = e.sourceHandle.split('_'); const origHandle = parts.pop(); const origNode = parts.join('_')
-        newEdges.push({ id: `e-${Date.now()}-${Math.random()}`, source: origNode, sourceHandle: origHandle, target: e.target, targetHandle: e.targetHandle })
-      }
-    })
-    setEdges(newEdges)
-    setSubgraphs(prev => prev.filter(s => s.id !== node.id))
-  }, [nodes, edges, subgraphs, setNodes, setEdges, setSubgraphs])
-
   const exitSubgraphEdit = useCallback(() => {
-    // Update the subgraph node's nodeCount
     if (editingSubgraph) {
       setNodes(prev => prev.map(n => 
         n.id === editingSubgraphId 

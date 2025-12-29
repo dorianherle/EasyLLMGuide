@@ -1,3 +1,7 @@
+"""
+Minimalist server - no EVENT/DATA distinction.
+"""
+
 import json
 import traceback
 from typing import Any
@@ -149,12 +153,7 @@ async def run_graph(req: RunRequest):
     if missing:
         return {"error": f"Missing inputs: {', '.join(missing)}"}
     
-    outputs = []
-    
     async def ws_observer(event_type: str, data: dict):
-        if event_type == "node_yield_data" and data.get("branch") == "output":
-            outputs.append(data.get("value"))
-        
         msg = json.dumps({
             "type": event_type,
             "data": {k: str(v) for k, v in data.items()}
@@ -181,12 +180,12 @@ async def run_graph(req: RunRequest):
     
     try:
         await executor.run(bindings)
-        print(f"[RUN] Completed. Outputs: {outputs}")
-        return {"status": "completed", "outputs": outputs}
+        print(f"[RUN] Completed")
+        return {"status": "completed"}
     except Exception as e:
         print(f"[RUN] Error: {e}")
         traceback.print_exc()
-        return {"error": str(e), "outputs": outputs}
+        return {"error": str(e)}
 
 
 @app.get("/entry_points")

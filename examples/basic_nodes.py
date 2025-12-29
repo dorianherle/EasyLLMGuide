@@ -1,54 +1,54 @@
 """
-Basic example nodes demonstrating the graph system.
+Basic example nodes for the graph system.
 
-Each function returns tuples of (branch_name, value, kind)
-- kind="DATA" feeds downstream nodes
-- kind="EVENT" is for status updates only
+Each function yields tuples of (branch_name, value).
+All outputs are DATA - no EVENT/DATA distinction.
 """
 
-# ============ INPUT NODES ============
+# ============ TERMINAL NODES ============
 
-async def number_input(value: int):
-    """Starting node - takes a number input from user."""
-    yield ("status", f"Received input: {value}", "EVENT")
-    yield ("out", value, "DATA")
+async def terminal_write(value: str):
+    """Terminal output node - displays value in terminal."""
+    yield ("done", value)  # Pass through for chaining
 
 
-async def text_input(value: str):
-    """Starting node - takes text input from user."""
-    yield ("out", value, "DATA")
+# ============ LOGGER NODE ============
+
+async def logger(msg: str):
+    """Logger node - sends message to log panel."""
+    yield ("logged", msg)  # Pass through for chaining
 
 
 # ============ MATH NODES ============
 
 async def add(a: int, b: int):
     """Add two numbers."""
-    result = a + b
-    yield ("status", f"Adding {a} + {b}", "EVENT")
-    yield ("result", result, "DATA")
+    yield ("result", a + b)
 
 
 async def multiply(a: int, b: int):
     """Multiply two numbers."""
-    result = a * b
-    yield ("result", result, "DATA")
+    yield ("result", a * b)
 
 
 async def double(value: int):
     """Double a number."""
-    yield ("status", "Doubling...", "EVENT")
-    yield ("result", value * 2, "DATA")
+    yield ("result", value * 2)
 
 
 async def triple(value: int):
     """Triple a number."""
-    yield ("status", "Tripling...", "EVENT")
-    yield ("result", value * 3, "DATA")
+    yield ("result", value * 3)
 
 
 async def square(value: int):
     """Square a number."""
-    yield ("result", value * value, "DATA")
+    yield ("result", value * value)
+
+
+async def negate(value: int):
+    """Negate a number."""
+    yield ("result", -value)
 
 
 # ============ BRANCHING NODES ============
@@ -56,76 +56,62 @@ async def square(value: int):
 async def is_even(value: int):
     """Check if number is even - outputs to 'yes' or 'no' branch."""
     if value % 2 == 0:
-        yield ("status", f"{value} is even", "EVENT")
-        yield ("yes", value, "DATA")
+        yield ("yes", value)
     else:
-        yield ("status", f"{value} is odd", "EVENT")
-        yield ("no", value, "DATA")
+        yield ("no", value)
 
 
 async def is_positive(value: int):
-    """Check if number is positive - outputs to 'positive' or 'negative' branch."""
+    """Check if number is positive."""
     if value > 0:
-        yield ("positive", value, "DATA")
+        yield ("positive", value)
     elif value < 0:
-        yield ("negative", value, "DATA")
+        yield ("negative", value)
     else:
-        yield ("zero", value, "DATA")
+        yield ("zero", value)
 
 
 async def compare(a: int, b: int):
-    """Compare two numbers - outputs to 'greater', 'less', or 'equal' branch."""
+    """Compare two numbers."""
     if a > b:
-        yield ("greater", a, "DATA")
+        yield ("greater", a)
     elif a < b:
-        yield ("less", b, "DATA")
+        yield ("less", b)
     else:
-        yield ("equal", a, "DATA")
+        yield ("equal", a)
 
 
 # ============ STRING NODES ============
 
 async def to_string(value: int):
     """Convert number to string."""
-    yield ("result", str(value), "DATA")
+    yield ("result", str(value))
 
 
-async def format_result(value: int):
-    """Format a number as a nice result string."""
-    yield ("result", f"Result: {value}", "DATA")
+async def format_text(template: str, value: int):
+    """Format a string with a value."""
+    yield ("result", template.format(value))
 
 
 async def concat(a: str, b: str):
     """Concatenate two strings."""
-    yield ("result", a + b, "DATA")
-
-
-# ============ OUTPUT NODES ============
-
-async def display(value: str):
-    """Display output - this is a terminal node."""
-    yield ("status", "Displaying result", "EVENT")
-    yield ("output", value, "DATA")
-
-
-async def display_number(value: int):
-    """Display a number as output."""
-    yield ("output", f"Final answer: {value}", "DATA")
+    yield ("result", a + b)
 
 
 # ============ UTILITY NODES ============
 
-async def delay(value: int):
-    """Pass through with a small delay (simulates processing)."""
+async def delay(value: int, seconds: float = 0.5):
+    """Pass through with a delay."""
     import asyncio
-    yield ("status", "Processing...", "EVENT")
-    await asyncio.sleep(0.5)
-    yield ("status", "Done!", "EVENT")
-    yield ("out", value, "DATA")
+    await asyncio.sleep(seconds)
+    yield ("out", value)
 
 
-async def log(value: int):
-    """Log a value and pass it through."""
-    yield ("status", f"LOG: {value}", "EVENT")
-    yield ("out", value, "DATA")
+async def passthrough(value: int):
+    """Pass value through unchanged."""
+    yield ("out", value)
 
+
+async def constant(value: int):
+    """Output a constant value - user provides the value."""
+    yield ("out", value)

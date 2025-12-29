@@ -33,31 +33,27 @@ function CustomNode({ id, data, selected }) {
                     type="target"
                     position={Position.Left}
                     id={input[0]}
-                    style={{
-                      background: getTypeColor(input[1].type),
-                      top: `${44 + i * 28}px`
-                    }}
+                    className="port-handle"
+                    style={{ background: getTypeColor(input[1].type) }}
                   />
-                  <span style={{ color: getTypeColor(input[1].type) }}>●</span>
-                  <span>{input[0]}: {input[1].type}</span>
+                  <span className="port-name">{input[0]}</span>
+                  <span className="port-type" style={{ color: getTypeColor(input[1].type) }}>{input[1].type}</span>
                 </div>
-              ) : <div />}
+              ) : <div className="custom-node-port-empty" />}
               
               {output ? (
                 <div className="custom-node-port output">
+                  <span className="port-name">{output[0]}</span>
+                  <span className="port-type" style={{ color: getTypeColor(output[1].type) }}>{output[1].type}</span>
                   <Handle
                     type="source"
                     position={Position.Right}
                     id={output[0]}
-                    style={{
-                      background: getTypeColor(output[1].type),
-                      top: `${44 + i * 28}px`
-                    }}
+                    className="port-handle"
+                    style={{ background: getTypeColor(output[1].type) }}
                   />
-                  <span style={{ color: getTypeColor(output[1].type) }}>●</span>
-                  <span>{output[0]}: {output[1].type}</span>
                 </div>
-              ) : <div />}
+              ) : <div className="custom-node-port-empty" />}
             </div>
           )
         })}
