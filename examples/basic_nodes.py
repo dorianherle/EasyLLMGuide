@@ -1,17 +1,27 @@
 """
 Basic example nodes for the graph system.
-Minimalist design - all yields are just (branch, value).
+All nodes are async generators that yield (branch, value) tuples.
 """
 
-# ============ TERMINAL I/O NODES ============
+# ============ TRIGGERS (Entry Points) ============
+
+async def trigger(value: int):
+    """
+    Trigger - Entry point that fires when external event arrives.
+    Each trigger can fire multiple times, propagating data downstream.
+    """
+    yield ("out", value)
+
 
 async def terminal_input(value: int):
     """
-    Terminal INPUT - Entry point for user input.
+    Terminal INPUT - Entry point for user input (alias for trigger).
     User provides value in the terminal when running.
     """
     yield ("out", value)
 
+
+# ============ TERMINAL OUTPUT ============
 
 async def terminal_output(value):
     """

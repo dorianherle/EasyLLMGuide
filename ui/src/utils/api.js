@@ -7,7 +7,7 @@ export async function getNodes() {
   return res.json()
 }
 
-function expandSubgraphs(nodes, edges, subgraphs) {
+export function expandSubgraphs(nodes, edges, subgraphs) {
   let expandedNodes = []
   let expandedEdges = [...edges]
   
@@ -147,4 +147,38 @@ export function sendInputResponse(nodeId, value) {
       value: value
     }))
   }
+}
+
+export async function getExamples() {
+  const res = await fetch(`${API_URL}/examples`)
+  if (!res.ok) throw new Error('Failed to fetch examples')
+  return res.json()
+}
+
+export async function getExample(key) {
+  const res = await fetch(`${API_URL}/examples/${key}`)
+  if (!res.ok) throw new Error('Failed to fetch example')
+  return res.json()
+}
+
+export async function exportGraph(nodes, edges, subgraphs = []) {
+  const { nodes: expandedNodes, edges: expandedEdges } = expandSubgraphs(nodes, edges, subgraphs)
+  
+  const graphDef = {
+    instances: expandedNodes.map(n => ({ id: n.id, type: n.data.label })),
+    edges: expandedEdges.map(e => ({
+      source: e.source,
+      sourceHandle: e.sourceHandle,
+      target: e.target,
+      targetHandle: e.targetHandle
+    }))
+  }
+  
+  const res = await fetch(`${API_URL}/export`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(graphDef)
+  })
+  if (!res.ok) throw new Error('Failed to export graph')
+  return res.json()
 }

@@ -1,32 +1,29 @@
 import { getTypeColor } from '../utils/typeColors'
 
-const CATEGORIES = {
-  'Input': ['number_input', 'text_input'],
-  'Math': ['add', 'multiply', 'double', 'triple', 'square'],
-  'Branch': ['is_even', 'is_positive', 'compare'],
-  'String': ['to_string', 'format_result', 'concat'],
-  'Output': ['display', 'display_number'],
-  'Utility': ['delay', 'log']
-}
-
 function NodeLibrary({ specs, onCollapse }) {
   const onDragStart = (event, spec) => {
     event.dataTransfer.setData('application/json', JSON.stringify(spec))
     event.dataTransfer.effectAllowed = 'move'
   }
 
-  const getCategory = (name) => {
-    for (const [cat, nodes] of Object.entries(CATEGORIES)) {
-      if (nodes.includes(name)) return cat
-    }
-    return 'Other'
-  }
-
+  // Group by category directly from spec
   const grouped = {}
   specs.forEach(spec => {
-    const cat = getCategory(spec.name)
+    const cat = spec.category || 'Other'
     if (!grouped[cat]) grouped[cat] = []
     grouped[cat].push(spec)
+  })
+
+  // Define preferred order
+  const ORDER = ['Triggers', 'Outputs', 'Logic', 'String', 'Constants', 'Utility']
+
+  const sortedCategories = Object.keys(grouped).sort((a, b) => {
+    const idxA = ORDER.indexOf(a)
+    const idxB = ORDER.indexOf(b)
+    if (idxA !== -1 && idxB !== -1) return idxA - idxB
+    if (idxA !== -1) return -1
+    if (idxB !== -1) return 1
+    return a.localeCompare(b)
   })
 
   return (
@@ -36,10 +33,10 @@ function NodeLibrary({ specs, onCollapse }) {
         <button className="collapse-btn" onClick={onCollapse} title="Collapse">×</button>
       </div>
       <div className="panel-content">
-        {Object.entries(grouped).map(([category, items]) => (
+        {sortedCategories.map((category) => (
           <div key={category} className="node-category">
             <h3 className="category-title">{category}</h3>
-            {items.map((spec) => (
+            {grouped[category].map((spec) => (
               <div
                 key={spec.name}
                 className="node-library-item"

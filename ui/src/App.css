@@ -206,6 +206,17 @@ body {
   cursor: not-allowed;
 }
 
+.toolbar .export-btn {
+  background: #8957e5;
+  border-color: #8957e5;
+  color: #fff;
+}
+
+.toolbar .export-btn:hover {
+  background: #a371f7;
+  border-color: #a371f7;
+}
+
 .toolbar select {
   background: #21262d;
   color: #c9d1d9;

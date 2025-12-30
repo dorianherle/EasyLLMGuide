@@ -20,6 +20,9 @@ def build_graph(nodes: list[NodeSpec], edges: list[EdgeSpec]) -> nx.MultiDiGraph
     return g
 
 
+TRIGGER_TYPES = {'terminal_input', 'trigger'}
+
+
 def validate_graph(g: nx.MultiDiGraph, entry_bindings: dict[tuple[str, str], any] = None) -> list[str]:
     """Validate the graph and return list of errors (empty if valid)."""
     errors = []
@@ -50,18 +53,30 @@ def validate_graph(g: nx.MultiDiGraph, entry_bindings: dict[tuple[str, str], any
     # Check input coverage
     for node_id in g.nodes:
         spec: NodeSpec = g.nodes[node_id]["spec"]
+        node_type = spec.node_type or spec.func.__name__
+        
+        # Skip validation for triggers - they receive external input
+        if node_type in TRIGGER_TYPES:
+            continue
         
         incoming = {}
         for u, v, data in g.in_edges(node_id, data=True):
-            incoming[data["dst_input"]] = True
+            inp = data["dst_input"]
+            incoming[inp] = incoming.get(inp, 0) + 1
         
         for input_name, input_def in spec.inputs.items():
-            has_edge = input_name in incoming
+            edge_count = incoming.get(input_name, 0)
             has_entry = (node_id, input_name) in entry_bindings
             has_init = input_def.init is not None
             has_default = input_def.default is not None
             
-            if not (has_edge or has_entry or has_init or has_default):
+            # Multiple connections are OK in dataflow model (values are queued)
+            # But we still warn since it might be unintentional
+            # Uncomment if you want to allow without warning:
+            # if edge_count > 1:
+            #     errors.append(f"Node '{node_id}' input '{input_name}' has multiple connections ({edge_count})")
+            
+            if edge_count == 0 and not (has_entry or has_init or has_default):
                 errors.append(f"Node '{node_id}' input '{input_name}' has no source")
     
     # Check cycles have init or entry

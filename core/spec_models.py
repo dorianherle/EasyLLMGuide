@@ -20,6 +20,8 @@ class OutputDef(BaseModel):
 
 class NodeSpec(BaseModel):
     name: str
+    node_type: str = ""  # The original type name (e.g. "double")
+    category: str = "Other"  # UI category
     inputs: dict[str, InputDef]
     outputs: dict[str, OutputDef]
     func: Callable

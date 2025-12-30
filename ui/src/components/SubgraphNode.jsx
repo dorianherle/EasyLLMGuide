@@ -13,17 +13,9 @@ function SubgraphNode({ id, data, selected }) {
     e.stopPropagation()
     deleteElements({ nodes: [{ id }] })
   }
-
-  const handleContextMenu = (e) => {
-    e.preventDefault()
-    // Context menu handled by parent
-  }
   
   return (
-    <div 
-      className={`custom-node subgraph-node ${selected ? 'selected' : ''}`}
-      onContextMenu={handleContextMenu}
-    >
+    <div className={`custom-node subgraph-node ${selected ? 'selected' : ''}`}>
       <div className="custom-node-header subgraph-header">
         <span>📦 {data.label}</span>
         <button className="node-delete-btn" onClick={handleDelete} title="Delete">×</button>
