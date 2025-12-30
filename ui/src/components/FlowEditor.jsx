@@ -1,11 +1,12 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useState, useRef } from 'react'
 import {
   ReactFlow,
   Background,
   Controls,
   useNodesState,
   useEdgesState,
-  addEdge
+  addEdge,
+  useReactFlow
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import CustomNode from './CustomNode'
@@ -24,6 +25,7 @@ function FlowEditor({ nodes, setNodes, edges, setEdges, onNodeSelect, subgraphs,
   const [selectedIds, setSelectedIds] = useState(new Set())
   const [showNameDialog, setShowNameDialog] = useState(false)
   const [editingSubgraphId, setEditingSubgraphId] = useState(null)
+  const reactFlowInstance = useRef(null)
 
   // Get current subgraph if editing
   const editingSubgraph = editingSubgraphId ? subgraphs.find(s => s.id === editingSubgraphId) : null
@@ -304,11 +306,19 @@ function FlowEditor({ nodes, setNodes, edges, setEdges, onNodeSelect, subgraphs,
   const onDrop = useCallback((event) => {
     event.preventDefault()
     const data = event.dataTransfer.getData('application/json')
-    if (!data) return
+    if (!data || !reactFlowInstance.current) return
     
     const spec = JSON.parse(data)
-    const bounds = event.currentTarget.getBoundingClientRect()
-    const position = { x: event.clientX - bounds.left - 90, y: event.clientY - bounds.top - 30 }
+    
+    // Convert screen coordinates to flow coordinates (accounts for pan/zoom)
+    const position = reactFlowInstance.current.screenToFlowPosition({
+      x: event.clientX,
+      y: event.clientY
+    })
+    
+    // Offset to center the node on cursor
+    position.x -= 90
+    position.y -= 30
     
     const newNode = {
       id: `${spec.name}-${Date.now()}`,
@@ -351,6 +361,7 @@ function FlowEditor({ nodes, setNodes, edges, setEdges, onNodeSelect, subgraphs,
         onPaneClick={onPaneClick}
         onNodeContextMenu={onNodeContextMenu}
         onPaneContextMenu={onPaneContextMenu}
+        onInit={(instance) => { reactFlowInstance.current = instance }}
         nodeTypes={nodeTypes}
         edgeTypes={edgeTypes}
         defaultEdgeOptions={{ type: 'custom' }}
