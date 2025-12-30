@@ -1,7 +1,7 @@
 /**
  * LogPanel - Shows logger node outputs
  */
-function LogPanel({ messages, onClear, onCollapse }) {
+function LogPanel({ messages, onClear, onCollapse, onNodeClick }) {
   return (
     <div className="panel log-panel">
       <div className="panel-header">
@@ -18,7 +18,7 @@ function LogPanel({ messages, onClear, onCollapse }) {
           messages.map((msg, i) => (
             <div key={i} className="log-entry">
               <span className="log-time">{msg.time.toLocaleTimeString()}</span>
-              <span className="log-node">{msg.node}</span>
+              <span className="log-node clickable" onClick={() => onNodeClick?.(msg.node)}>{msg.node}</span>
               <span className="log-msg">{msg.message}</span>
             </div>
           ))

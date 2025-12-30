@@ -17,7 +17,7 @@ import NameDialog from './NameDialog'
 const nodeTypes = { custom: CustomNode, subgraph: SubgraphNode }
 const edgeTypes = { custom: CustomEdge }
 
-function FlowEditor({ nodes, setNodes, edges, setEdges, onNodeSelect, subgraphs, setSubgraphs }) {
+function FlowEditor({ nodes, setNodes, edges, setEdges, onNodeSelect, subgraphs, setSubgraphs, highlightedNode }) {
   const [flowNodes, setFlowNodes, onNodesChange] = useNodesState([])
   const [flowEdges, setFlowEdges, onEdgesChange] = useEdgesState([])
   const [contextMenu, setContextMenu] = useState(null)
@@ -31,13 +31,21 @@ function FlowEditor({ nodes, setNodes, edges, setEdges, onNodeSelect, subgraphs,
   // Sync nodes - show either main graph or subgraph contents
   useEffect(() => {
     if (editingSubgraph) {
-      setFlowNodes(editingSubgraph.nodes.map(n => ({ ...n, selected: selectedIds.has(n.id) })))
+      setFlowNodes(editingSubgraph.nodes.map(n => ({ 
+        ...n, 
+        selected: selectedIds.has(n.id),
+        className: n.id === highlightedNode ? 'highlighted' : ''
+      })))
       setFlowEdges((editingSubgraph.edges || []).map(e => ({ ...e, type: 'custom' })))
     } else {
-      setFlowNodes(nodes.map(n => ({ ...n, selected: selectedIds.has(n.id) })))
+      setFlowNodes(nodes.map(n => ({ 
+        ...n, 
+        selected: selectedIds.has(n.id),
+        className: n.id === highlightedNode ? 'highlighted' : ''
+      })))
       setFlowEdges(edges.map(e => ({ ...e, type: 'custom' })))
     }
-  }, [nodes, edges, selectedIds, editingSubgraph, setFlowNodes, setFlowEdges])
+  }, [nodes, edges, selectedIds, editingSubgraph, setFlowNodes, setFlowEdges, highlightedNode])
 
   const handleNodesChange = useCallback((changes) => {
     onNodesChange(changes)

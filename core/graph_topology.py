@@ -1,3 +1,4 @@
+from typing import Any
 import networkx as nx
 from core.spec_models import NodeSpec, EdgeSpec
 
@@ -42,7 +43,8 @@ def validate_graph(g: nx.MultiDiGraph, entry_bindings: dict[tuple[str, str], any
         src_type = src_spec.outputs[src_branch].type
         dst_type = dst_spec.inputs[dst_input].type
         
-        if src_type != dst_type:
+        # Allow Any type to match anything
+        if src_type != dst_type and src_type is not Any and dst_type is not Any:
             errors.append(f"Edge {u}->{v}: type mismatch {src_type} -> {dst_type}")
     
     # Check input coverage

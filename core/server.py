@@ -1,7 +1,8 @@
 """
-Minimalist server - no EVENT/DATA distinction.
+Server with dynamic input support.
 """
 
+import asyncio
 import json
 import traceback
 from typing import Any
@@ -30,14 +31,16 @@ node_types: dict[str, NodeSpec] = {node.name: node for node in EXAMPLE_NODES}
 
 # Current graph state
 current_graph = None
-current_instances = {}  # instance_id -> node_type_name
-current_entry_points = []  # List of (instance_id, input_name) that need values
+current_instances = {}
+
+# Websocket clients and pending inputs
 websocket_clients: list[WebSocket] = []
+pending_inputs: dict[str, asyncio.Future] = {}
 
 
 class NodeInstance(BaseModel):
     id: str
-    type: str  # references node_types
+    type: str
 
 
 class GraphDefinition(BaseModel):
@@ -45,18 +48,14 @@ class GraphDefinition(BaseModel):
     edges: list[dict]
 
 
-class RunRequest(BaseModel):
-    inputs: dict = {}  # instance_id.input_name -> value
-
-
 @app.get("/nodes")
 async def get_nodes():
-    """Get available node types."""
     result = []
     for name, spec in node_types.items():
+        visible_inputs = {k: {"type": v.type.__name__} for k, v in spec.inputs.items() if v.init is None}
         result.append({
             "name": name,
-            "inputs": {k: {"type": v.type.__name__} for k, v in spec.inputs.items()},
+            "inputs": visible_inputs,
             "outputs": {k: {"type": v.type.__name__} for k, v in spec.outputs.items()},
         })
     return result
@@ -64,13 +63,10 @@ async def get_nodes():
 
 @app.post("/graph")
 async def save_graph(graph_def: GraphDefinition):
-    """Save graph and return entry points (unconnected inputs)."""
-    global current_graph, current_instances, current_entry_points
+    global current_graph, current_instances
     
     print(f"[GRAPH] Instances: {[(i.id, i.type) for i in graph_def.instances]}")
-    print(f"[GRAPH] Edges: {graph_def.edges}")
     
-    # Build instance map and create NodeSpecs for each instance
     current_instances = {}
     instance_specs = []
     
@@ -79,7 +75,6 @@ async def save_graph(graph_def: GraphDefinition):
             return {"status": "error", "errors": [f"Unknown node type: {inst.type}"]}
         
         base_spec = node_types[inst.type]
-        # Create a spec for this instance (using instance ID as node name)
         instance_spec = NodeSpec(
             name=inst.id,
             inputs=base_spec.inputs,
@@ -89,7 +84,6 @@ async def save_graph(graph_def: GraphDefinition):
         instance_specs.append(instance_spec)
         current_instances[inst.id] = inst.type
     
-    # Convert edges to use instance IDs
     edges = []
     for e in graph_def.edges:
         edges.append(EdgeSpec(
@@ -101,57 +95,23 @@ async def save_graph(graph_def: GraphDefinition):
     
     current_graph = build_graph(instance_specs, edges)
     
-    # Find entry points: inputs with no incoming edges
-    current_entry_points = []
-    connected_inputs = set()
-    for e in edges:
-        connected_inputs.add((e.target_node, e.target_input))
+    errors = validate_graph(current_graph, {})
+    errors = [e for e in errors if 'terminal_input' not in e]
     
-    for inst in graph_def.instances:
-        base_spec = node_types[inst.type]
-        for input_name, input_def in base_spec.inputs.items():
-            if (inst.id, input_name) not in connected_inputs:
-                # This input has no source - it's an entry point
-                if input_def.init is None and input_def.default is None:
-                    current_entry_points.append({
-                        "instance": inst.id,
-                        "input": input_name,
-                        "type": input_def.type.__name__
-                    })
-    
-    # Validate with entry points marked
-    entry_bindings = {(ep["instance"], ep["input"]): None for ep in current_entry_points}
-    errors = validate_graph(current_graph, entry_bindings)
-    
-    print(f"[GRAPH] Entry points: {current_entry_points}")
     print(f"[GRAPH] Validation: {'OK' if not errors else errors}")
     
     return {
         "status": "ok" if not errors else "error",
         "errors": errors,
-        "entry_points": current_entry_points
     }
 
 
-@app.post("/run")
-async def run_graph(req: RunRequest):
-    """Run the graph with provided input values."""
-    global current_graph, current_entry_points
+async def run_executor():
+    """Run the executor in background."""
+    global current_graph, pending_inputs
     
-    print(f"[RUN] Inputs: {req.inputs}")
-    
-    if current_graph is None:
-        return {"error": "No graph defined"}
-    
-    # Check all entry points have values
-    missing = []
-    for ep in current_entry_points:
-        key = f"{ep['instance']}.{ep['input']}"
-        if key not in req.inputs:
-            missing.append(key)
-    
-    if missing:
-        return {"error": f"Missing inputs: {', '.join(missing)}"}
+    # Small delay to ensure websocket is ready
+    await asyncio.sleep(0.1)
     
     async def ws_observer(event_type: str, data: dict):
         msg = json.dumps({
@@ -164,34 +124,39 @@ async def run_graph(req: RunRequest):
             except:
                 pass
     
-    executor = Executor(current_graph, observers=[ws_observer])
+    async def input_handler(node_id: str) -> Any:
+        future = asyncio.get_event_loop().create_future()
+        pending_inputs[node_id] = future
+        value = await future
+        del pending_inputs[node_id]
+        return value
     
-    # Convert inputs to bindings
-    bindings = {}
-    for key, value in req.inputs.items():
-        parts = key.split(".")
-        if len(parts) == 2:
-            try:
-                value = int(value)
-            except (ValueError, TypeError):
-                pass
-            bindings[(parts[0], parts[1])] = value
-            print(f"[RUN] Binding: {parts[0]}.{parts[1]} = {value}")
+    executor = Executor(current_graph, observers=[ws_observer], input_handler=input_handler)
     
     try:
-        await executor.run(bindings)
+        await executor.run({})
         print(f"[RUN] Completed")
-        return {"status": "completed"}
+        await ws_observer("run_complete", {})
     except Exception as e:
         print(f"[RUN] Error: {e}")
         traceback.print_exc()
-        return {"error": str(e)}
+        await ws_observer("run_error", {"error": str(e)})
 
 
-@app.get("/entry_points")
-async def get_entry_points():
-    """Get current graph's entry points."""
-    return {"entry_points": current_entry_points}
+@app.post("/run")
+async def run_graph():
+    """Start graph execution - returns immediately, progress via websocket."""
+    global current_graph
+    
+    if current_graph is None:
+        return {"error": "No graph defined"}
+    
+    pending_inputs.clear()
+    
+    # Start execution in background task
+    asyncio.create_task(run_executor())
+    
+    return {"status": "started"}
 
 
 @app.websocket("/ws/events")
@@ -202,7 +167,21 @@ async def websocket_events(websocket: WebSocket):
     
     try:
         while True:
-            await websocket.receive_text()
+            text = await websocket.receive_text()
+            try:
+                msg = json.loads(text)
+                if msg.get("type") == "input_response":
+                    node_id = msg.get("node_id")
+                    value = msg.get("value")
+                    try:
+                        value = int(value)
+                    except (ValueError, TypeError):
+                        pass
+                    if node_id in pending_inputs:
+                        pending_inputs[node_id].set_result(value)
+                        print(f"[WS] Input received for {node_id}: {value}")
+            except json.JSONDecodeError:
+                pass
     except WebSocketDisconnect:
         websocket_clients.remove(websocket)
         print(f"[WS] Client disconnected. Total: {len(websocket_clients)}")

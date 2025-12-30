@@ -1,22 +1,43 @@
 """
 Basic example nodes for the graph system.
-
-Each function yields tuples of (branch_name, value).
-All outputs are DATA - no EVENT/DATA distinction.
+Minimalist design - all yields are just (branch, value).
 """
 
-# ============ TERMINAL NODES ============
+# ============ TERMINAL I/O NODES ============
 
-async def terminal_write(value: str):
-    """Terminal output node - displays value in terminal."""
-    yield ("done", value)  # Pass through for chaining
+async def terminal_input(value: int):
+    """
+    Terminal INPUT - Entry point for user input.
+    User provides value in the terminal when running.
+    """
+    yield ("out", value)
+
+
+async def terminal_output(value):
+    """
+    Terminal OUTPUT - Displays any value in terminal.
+    Accepts any type, converts to string.
+    """
+    yield ("done", str(value))
+
+
+# ============ CONSTANTS ============
+
+async def const_int(value: int = 0):
+    """Integer constant - set a fixed value."""
+    yield ("out", value)
+
+
+async def const_str(value: str = ""):
+    """String constant - set a fixed text."""
+    yield ("out", value)
 
 
 # ============ LOGGER NODE ============
 
-async def logger(msg: str):
-    """Logger node - sends message to log panel."""
-    yield ("logged", msg)  # Pass through for chaining
+async def logger(msg):
+    """Logger node - sends any value to log panel."""
+    yield ("logged", str(msg))
 
 
 # ============ MATH NODES ============
@@ -88,7 +109,7 @@ async def to_string(value: int):
     yield ("result", str(value))
 
 
-async def format_text(template: str, value: int):
+async def format_text(template: str = "Value: {}", value: int = 0):
     """Format a string with a value."""
     yield ("result", template.format(value))
 
@@ -109,9 +130,4 @@ async def delay(value: int, seconds: float = 0.5):
 
 async def passthrough(value: int):
     """Pass value through unchanged."""
-    yield ("out", value)
-
-
-async def constant(value: int):
-    """Output a constant value - user provides the value."""
     yield ("out", value)

@@ -2,18 +2,21 @@ import { useState, useCallback, useEffect, useRef } from 'react'
 import FlowEditor from './components/FlowEditor'
 import NodeLibrary from './components/NodeLibrary'
 import CodePanel from './components/CodePanel'
-import Terminal from './components/Terminal'
 import LogPanel from './components/LogPanel'
-import { getNodes, saveGraph, runGraph, connectWebSocket } from './utils/api'
+import RunPanel from './components/RunPanel'
+import { getNodes, saveGraph, runGraph, connectWebSocket, sendInputResponse } from './utils/api'
 
-// Actual Python code for nodes (minimalist - no EVENT)
 const NODE_CODE = {
-  terminal_write: `async def terminal_write(value: str):
-    """Display value in terminal."""
-    yield ("done", value)`,
-  logger: `async def logger(msg: str):
-    """Send message to log panel."""
-    yield ("logged", msg)`,
+  terminal_input: `async def terminal_input(value: int):
+    yield ("out", value)`,
+  terminal_output: `async def terminal_output(value):
+    yield ("done", str(value))`,
+  const_int: `async def const_int():
+    yield ("out", 0)`,
+  const_str: `async def const_str():
+    yield ("out", "")`,
+  logger: `async def logger(msg):
+    yield ("logged", str(msg))`,
   add: `async def add(a: int, b: int):
     yield ("result", a + b)`,
   multiply: `async def multiply(a: int, b: int):
@@ -54,8 +57,6 @@ const NODE_CODE = {
     yield ("out", value)`,
   passthrough: `async def passthrough(value: int):
     yield ("out", value)`,
-  constant: `async def constant(value: int = 0):
-    yield ("out", value)`,
 }
 
 function App() {
@@ -64,50 +65,63 @@ function App() {
   const [edges, setEdges] = useState([])
   const [subgraphs, setSubgraphs] = useState([])
   const [nodeSpecs, setNodeSpecs] = useState([])
-  const [entryPoints, setEntryPoints] = useState([])
-  const [terminalLogs, setTerminalLogs] = useState([
-    { type: 'info', message: 'Welcome! Build a graph and run it.' },
-    { type: 'info', message: 'Type "help" for commands.' }
-  ])
-  const [logPanelMessages, setLogPanelMessages] = useState([])
+  const [logMessages, setLogMessages] = useState([])
   const [isRunning, setIsRunning] = useState(false)
+  const [highlightedNode, setHighlightedNode] = useState(null)
   const [showLibrary, setShowLibrary] = useState(true)
   const [showCode, setShowCode] = useState(true)
   const [showLog, setShowLog] = useState(false)
+  const [connected, setConnected] = useState(false)
+  
+  // Run panel state
+  const [showRunPanel, setShowRunPanel] = useState(false)
+  const [pendingInputs, setPendingInputs] = useState([])  // Array of { nodeId, inputName, type }
+  const [terminalOutputs, setTerminalOutputs] = useState([])
+  const [runError, setRunError] = useState(null)
+  
   const fileInputRef = useRef(null)
 
   useEffect(() => {
     getNodes().then(data => {
       setNodeSpecs(data.map(n => ({ ...n, code: NODE_CODE[n.name] || `# ${n.name}` })))
-      addLog('info', 'Connected to backend')
-    }).catch(() => {
-      addLog('error', 'Backend not running: python -m core.server')
-    })
+      setConnected(true)
+    }).catch(() => setConnected(false))
   }, [])
 
   useEffect(() => {
     const ws = connectWebSocket((msg) => {
-      if (msg.type === 'node_start') {
-        addLog('event', `▶ ${msg.data?.node_id}`)
-      } else if (msg.type === 'terminal_write') {
-        // Terminal write node output
-        addLog('output', msg.data?.value)
+      if (msg.type === 'input_needed') {
+        // Collect all input requests (they may come in rapid succession)
+        setPendingInputs(prev => {
+          // Avoid duplicates
+          if (prev.some(p => p.nodeId === msg.data?.node_id)) return prev
+          return [...prev, {
+            nodeId: msg.data?.node_id,
+            inputName: msg.data?.input || 'value',
+            type: msg.data?.type || 'int'
+          }]
+        })
+      } else if (msg.type === 'terminal_output') {
+        setTerminalOutputs(prev => [...prev, msg.data?.value])
       } else if (msg.type === 'log') {
-        // Logger node output
-        setLogPanelMessages(prev => [...prev, { time: new Date(), node: msg.data?.node_id, message: msg.data?.value }])
-        if (!showLog) setShowLog(true)
-      } else if (msg.type === 'node_output') {
-        addLog('event', `  → ${msg.data?.branch}`)
-      } else if (msg.type === 'node_done') {
-        addLog('event', `✓ ${msg.data?.node_id}`)
+        setLogMessages(prev => [...prev, { time: new Date(), node: msg.data?.node_id, message: msg.data?.value }])
+        setShowLog(true)
       } else if (msg.type === 'node_error') {
-        addLog('error', `✗ ${msg.data?.node_id}: ${msg.data?.error}`)
+        setRunError(`${msg.data?.node_id}: ${msg.data?.error}`)
+        setIsRunning(false)
+        setPendingInputs([])
+      } else if (msg.type === 'run_complete') {
+        setIsRunning(false)
+        setPendingInputs([])
+        setHighlightedNode(null)
+      } else if (msg.type === 'run_error') {
+        setRunError(msg.data?.error)
+        setIsRunning(false)
+        setPendingInputs([])
       }
     })
     return () => ws.close()
-  }, [showLog])
-
-  const addLog = (type, message) => setTerminalLogs(prev => [...prev, { type, message }])
+  }, [])
 
   const handleNodeSelect = useCallback((node) => {
     const spec = nodeSpecs.find(s => s.name === node.data.label)
@@ -122,91 +136,48 @@ function App() {
     setSelectedNode(prev => prev ? { ...prev, code: newCode } : null)
   }, [selectedNode])
 
-  // Save graph and get entry points
-  const handleSaveGraph = async () => {
-    if (nodes.length === 0) {
-      addLog('error', 'No nodes in graph')
-      return null
-    }
-    
-    addLog('event', 'Saving graph...')
-    const result = await saveGraph(nodes, edges, subgraphs)
-    
-    if (result.errors?.length > 0) {
-      result.errors.forEach(err => addLog('error', err))
-      return null
-    }
-    
-    setEntryPoints(result.entry_points || [])
-    
-    if (result.entry_points?.length > 0) {
-      addLog('info', `Graph needs ${result.entry_points.length} input(s):`)
-      result.entry_points.forEach(ep => {
-        addLog('info', `  • ${ep.instance}.${ep.input} (${ep.type})`)
-      })
-    }
-    
-    return result.entry_points || []
-  }
+  const handleLogNodeClick = useCallback((nodeId) => {
+    setHighlightedNode(nodeId)
+    setTimeout(() => setHighlightedNode(null), 2000)
+  }, [])
 
-  const handleTerminalRun = async (value, command, extra) => {
-    if (command === 'help') {
-      addLog('info', '── Commands ──')
-      addLog('info', '  <value>      Run with single input')
-      addLog('info', '  run          Save and show required inputs')
-      addLog('info', '  clear        Clear terminal')
-      addLog('info', '  log          Toggle log panel')
+  const handleRunClick = async () => {
+    if (nodes.length === 0) {
+      setRunError('No nodes in graph')
       return
     }
-    if (command === 'clear') { setTerminalLogs([]); return }
-    if (command === 'log') { setShowLog(!showLog); return }
-    if (command === 'unknown') { addLog('error', `Unknown: ${extra}`); return }
     
-    if (value === null && command !== 'run') return
-    
+    setRunError(null)
+    setTerminalOutputs([])
+    setLogMessages([])
+    setPendingInputs([])
+    setShowRunPanel(true)
     setIsRunning(true)
     
-    try {
-      // First save graph to get entry points
-      const eps = await handleSaveGraph()
-      if (!eps) { setIsRunning(false); return }
-      
-      if (eps.length === 0) {
-        // No entry points needed - run directly
-        addLog('event', 'Running (no inputs needed)...')
-        const result = await runGraph({})
-        if (result.error) addLog('error', result.error)
-        addLog('info', 'Done')
-        setIsRunning(false)
-        return
-      }
-      
-      // Build inputs object
-      const inputs = {}
-      if (value !== null) {
-        // Simple case: single value for all inputs
-        eps.forEach(ep => {
-          inputs[`${ep.instance}.${ep.input}`] = value
-        })
-        addLog('input', `run ${value}`)
-      } else {
-        addLog('info', 'Provide values for each input above')
-        setIsRunning(false)
-        return
-      }
-      
-      addLog('event', 'Running...')
-      const result = await runGraph(inputs)
-      
-      if (result.error) {
-        addLog('error', result.error)
-      }
-      addLog('info', 'Done')
-    } catch (err) {
-      addLog('error', `Failed: ${err.message}`)
+    // Save graph
+    const result = await saveGraph(nodes, edges, subgraphs)
+    if (result.errors?.length > 0) {
+      setRunError(result.errors.join('\n'))
+      setIsRunning(false)
+      return
     }
     
-    setIsRunning(false)
+    // Start execution - returns immediately, progress via websocket
+    const runResult = await runGraph()
+    if (runResult.error) {
+      setRunError(runResult.error)
+      setIsRunning(false)
+    }
+    // Don't set isRunning=false here - wait for run_complete via websocket
+  }
+
+  const handleSubmitInputs = (values) => {
+    // values is { nodeId: value, ... }
+    Object.entries(values).forEach(([nodeId, value]) => {
+      sendInputResponse(nodeId, value)
+    })
+    setPendingInputs([])
+    setHighlightedNode(null)
   }
 
   const handleSave = () => {
@@ -218,7 +189,6 @@ function App() {
     a.download = 'graph.json'
     a.click()
     URL.revokeObjectURL(url)
-    addLog('info', 'Saved to graph.json')
   }
 
   const handleLoad = (e) => {
@@ -231,8 +201,7 @@ function App() {
         setNodes(data.nodes || [])
         setEdges(data.edges || [])
         setSubgraphs(data.subgraphs || [])
-        addLog('info', `Loaded: ${data.name || file.name}`)
-      } catch { addLog('error', 'Invalid JSON') }
+      } catch { /* invalid json */ }
     }
     reader.readAsText(file)
     e.target.value = ''
@@ -243,8 +212,14 @@ function App() {
     if (data) {
       setNodes(data.nodes)
       setEdges(data.edges)
-      addLog('info', `Loaded: ${data.name}`)
     }
+  }
+
+  const handleCloseRunPanel = () => {
+    setShowRunPanel(false)
+    setPendingInputs([])
+    setTerminalOutputs([])
+    setRunError(null)
   }
 
   return (
@@ -254,6 +229,9 @@ function App() {
       <div className="main-area">
         <div className="toolbar">
           {!showLibrary && <button onClick={() => setShowLibrary(true)} className="toggle-btn">☰</button>}
+          <button onClick={handleRunClick} disabled={isRunning && pendingInputs.length === 0} className="run-btn">
+            {isRunning && pendingInputs.length === 0 ? '⏳' : '▶'} Run
+          </button>
           <div className="toolbar-group">
             <button onClick={handleSave}>Save</button>
             <button onClick={() => fileInputRef.current?.click()}>Load</button>
@@ -267,9 +245,13 @@ function App() {
               <option value="branching">Positive/Negative</option>
             </select>
           </div>
+          {runError && <span className="run-error">{runError}</span>}
+          <div className="toolbar-spacer" />
+          {!connected && <span className="connection-error">⚠ Backend not connected</span>}
           <button onClick={() => setShowLog(!showLog)} className={showLog ? 'toggle-btn active' : 'toggle-btn'}>📋</button>
           {!showCode && <button onClick={() => setShowCode(true)} className="toggle-btn">{'</>'}</button>}
         </div>
+        
         <div className="flow-container">
           <FlowEditor 
             nodes={nodes} 
@@ -279,12 +261,22 @@ function App() {
             onNodeSelect={handleNodeSelect}
             subgraphs={subgraphs}
             setSubgraphs={setSubgraphs}
+            highlightedNode={highlightedNode}
           />
         </div>
-        <Terminal onRun={handleTerminalRun} logs={terminalLogs} isRunning={isRunning} entryPoints={entryPoints} />
+        
+        {showRunPanel && (
+          <RunPanel
+            pendingInputs={pendingInputs}
+            outputs={terminalOutputs}
+            onSubmitInputs={handleSubmitInputs}
+            onClose={handleCloseRunPanel}
+            isRunning={isRunning}
+          />
+        )}
       </div>
       
-      {showLog && <LogPanel messages={logPanelMessages} onClear={() => setLogPanelMessages([])} onCollapse={() => setShowLog(false)} />}
+      {showLog && <LogPanel messages={logMessages} onClear={() => setLogMessages([])} onCollapse={() => setShowLog(false)} onNodeClick={handleLogNodeClick} />}
       {showCode && <CodePanel node={selectedNode} onCodeChange={handleCodeChange} onCollapse={() => setShowCode(false)} />}
     </div>
   )
@@ -294,58 +286,48 @@ const EXAMPLES = {
   even_odd: {
     name: 'Even/Odd Flow',
     nodes: [
-      { id: 'const-1', type: 'custom', position: { x: 50, y: 150 }, data: { label: 'constant', inputs: { value: { type: 'int' } }, outputs: { out: { type: 'int' } } } },
+      { id: 'in-1', type: 'custom', position: { x: 50, y: 150 }, data: { label: 'terminal_input', inputs: { value: { type: 'int' } }, outputs: { out: { type: 'int' } } } },
       { id: 'check-1', type: 'custom', position: { x: 260, y: 150 }, data: { label: 'is_even', inputs: { value: { type: 'int' } }, outputs: { yes: { type: 'int' }, no: { type: 'int' } } } },
       { id: 'double-1', type: 'custom', position: { x: 480, y: 50 }, data: { label: 'double', inputs: { value: { type: 'int' } }, outputs: { result: { type: 'int' } } } },
       { id: 'triple-1', type: 'custom', position: { x: 480, y: 250 }, data: { label: 'triple', inputs: { value: { type: 'int' } }, outputs: { result: { type: 'int' } } } },
-      { id: 'fmt-1', type: 'custom', position: { x: 700, y: 150 }, data: { label: 'format_text', inputs: { template: { type: 'str' }, value: { type: 'int' } }, outputs: { result: { type: 'str' } } } },
-      { id: 'term-1', type: 'custom', position: { x: 920, y: 150 }, data: { label: 'terminal_write', inputs: { value: { type: 'str' } }, outputs: { done: { type: 'str' } } } }
+      { id: 'out-1', type: 'custom', position: { x: 700, y: 150 }, data: { label: 'terminal_output', inputs: { value: { type: 'Any' } }, outputs: { done: { type: 'str' } } } }
     ],
     edges: [
-      { id: 'e1', source: 'const-1', target: 'check-1', sourceHandle: 'out', targetHandle: 'value' },
+      { id: 'e1', source: 'in-1', target: 'check-1', sourceHandle: 'out', targetHandle: 'value' },
       { id: 'e2', source: 'check-1', target: 'double-1', sourceHandle: 'yes', targetHandle: 'value' },
       { id: 'e3', source: 'check-1', target: 'triple-1', sourceHandle: 'no', targetHandle: 'value' },
-      { id: 'e4', source: 'double-1', target: 'fmt-1', sourceHandle: 'result', targetHandle: 'value' },
-      { id: 'e5', source: 'triple-1', target: 'fmt-1', sourceHandle: 'result', targetHandle: 'value' },
-      { id: 'e6', source: 'fmt-1', target: 'term-1', sourceHandle: 'result', targetHandle: 'value' }
+      { id: 'e4', source: 'double-1', target: 'out-1', sourceHandle: 'result', targetHandle: 'value' },
+      { id: 'e5', source: 'triple-1', target: 'out-1', sourceHandle: 'result', targetHandle: 'value' }
     ]
   },
   math_chain: {
     name: 'Math Chain + Logger',
     nodes: [
-      { id: 'const-1', type: 'custom', position: { x: 50, y: 100 }, data: { label: 'constant', inputs: { value: { type: 'int' } }, outputs: { out: { type: 'int' } } } },
+      { id: 'in-1', type: 'custom', position: { x: 50, y: 100 }, data: { label: 'terminal_input', inputs: { value: { type: 'int' } }, outputs: { out: { type: 'int' } } } },
       { id: 'sq-1', type: 'custom', position: { x: 250, y: 100 }, data: { label: 'square', inputs: { value: { type: 'int' } }, outputs: { result: { type: 'int' } } } },
       { id: 'dbl-1', type: 'custom', position: { x: 450, y: 100 }, data: { label: 'double', inputs: { value: { type: 'int' } }, outputs: { result: { type: 'int' } } } },
-      { id: 'str-1', type: 'custom', position: { x: 650, y: 100 }, data: { label: 'to_string', inputs: { value: { type: 'int' } }, outputs: { result: { type: 'str' } } } },
-      { id: 'log-1', type: 'custom', position: { x: 650, y: 220 }, data: { label: 'logger', inputs: { msg: { type: 'str' } }, outputs: { logged: { type: 'str' } } } },
-      { id: 'term-1', type: 'custom', position: { x: 850, y: 100 }, data: { label: 'terminal_write', inputs: { value: { type: 'str' } }, outputs: { done: { type: 'str' } } } }
+      { id: 'log-1', type: 'custom', position: { x: 450, y: 220 }, data: { label: 'logger', inputs: { msg: { type: 'Any' } }, outputs: { logged: { type: 'str' } } } },
+      { id: 'out-1', type: 'custom', position: { x: 650, y: 100 }, data: { label: 'terminal_output', inputs: { value: { type: 'Any' } }, outputs: { done: { type: 'str' } } } }
     ],
     edges: [
-      { id: 'e1', source: 'const-1', target: 'sq-1', sourceHandle: 'out', targetHandle: 'value' },
+      { id: 'e1', source: 'in-1', target: 'sq-1', sourceHandle: 'out', targetHandle: 'value' },
       { id: 'e2', source: 'sq-1', target: 'dbl-1', sourceHandle: 'result', targetHandle: 'value' },
-      { id: 'e3', source: 'dbl-1', target: 'str-1', sourceHandle: 'result', targetHandle: 'value' },
-      { id: 'e4', source: 'str-1', target: 'term-1', sourceHandle: 'result', targetHandle: 'value' },
-      { id: 'e5', source: 'str-1', target: 'log-1', sourceHandle: 'result', targetHandle: 'msg' }
+      { id: 'e3', source: 'sq-1', target: 'log-1', sourceHandle: 'result', targetHandle: 'msg' },
+      { id: 'e4', source: 'dbl-1', target: 'out-1', sourceHandle: 'result', targetHandle: 'value' }
     ]
   },
   branching: {
     name: 'Positive/Negative',
     nodes: [
-      { id: 'const-1', type: 'custom', position: { x: 50, y: 150 }, data: { label: 'constant', inputs: { value: { type: 'int' } }, outputs: { out: { type: 'int' } } } },
+      { id: 'in-1', type: 'custom', position: { x: 50, y: 150 }, data: { label: 'terminal_input', inputs: { value: { type: 'int' } }, outputs: { out: { type: 'int' } } } },
       { id: 'check-1', type: 'custom', position: { x: 260, y: 150 }, data: { label: 'is_positive', inputs: { value: { type: 'int' } }, outputs: { positive: { type: 'int' }, negative: { type: 'int' }, zero: { type: 'int' } } } },
-      { id: 'str-pos', type: 'custom', position: { x: 500, y: 30 }, data: { label: 'format_text', inputs: { template: { type: 'str' }, value: { type: 'int' } }, outputs: { result: { type: 'str' } } } },
-      { id: 'str-neg', type: 'custom', position: { x: 500, y: 150 }, data: { label: 'format_text', inputs: { template: { type: 'str' }, value: { type: 'int' } }, outputs: { result: { type: 'str' } } } },
-      { id: 'str-zero', type: 'custom', position: { x: 500, y: 270 }, data: { label: 'format_text', inputs: { template: { type: 'str' }, value: { type: 'int' } }, outputs: { result: { type: 'str' } } } },
-      { id: 'term-1', type: 'custom', position: { x: 750, y: 150 }, data: { label: 'terminal_write', inputs: { value: { type: 'str' } }, outputs: { done: { type: 'str' } } } }
+      { id: 'out-1', type: 'custom', position: { x: 500, y: 150 }, data: { label: 'terminal_output', inputs: { value: { type: 'Any' } }, outputs: { done: { type: 'str' } } } }
     ],
     edges: [
-      { id: 'e1', source: 'const-1', target: 'check-1', sourceHandle: 'out', targetHandle: 'value' },
-      { id: 'e2', source: 'check-1', target: 'str-pos', sourceHandle: 'positive', targetHandle: 'value' },
-      { id: 'e3', source: 'check-1', target: 'str-neg', sourceHandle: 'negative', targetHandle: 'value' },
-      { id: 'e4', source: 'check-1', target: 'str-zero', sourceHandle: 'zero', targetHandle: 'value' },
-      { id: 'e5', source: 'str-pos', target: 'term-1', sourceHandle: 'result', targetHandle: 'value' },
-      { id: 'e6', source: 'str-neg', target: 'term-1', sourceHandle: 'result', targetHandle: 'value' },
-      { id: 'e7', source: 'str-zero', target: 'term-1', sourceHandle: 'result', targetHandle: 'value' }
+      { id: 'e1', source: 'in-1', target: 'check-1', sourceHandle: 'out', targetHandle: 'value' },
+      { id: 'e2', source: 'check-1', target: 'out-1', sourceHandle: 'positive', targetHandle: 'value' },
+      { id: 'e3', source: 'check-1', target: 'out-1', sourceHandle: 'negative', targetHandle: 'value' },
+      { id: 'e4', source: 'check-1', target: 'out-1', sourceHandle: 'zero', targetHandle: 'value' }
     ]
   }
 }
