@@ -6,5 +6,6 @@ rich
 fastapi
 uvicorn
 websockets
+python-multipart
 
 
