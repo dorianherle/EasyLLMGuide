@@ -33,6 +33,27 @@ export function expandSubgraphs(nodes, edges, subgraphs) {
   let expandedNodes = []
   let expandedEdges = [...edges]
   
+  // Helper to parse handle by matching against actual node IDs
+  const parseHandle = (handle, contextNodes) => {
+    for (const n of contextNodes) {
+      if (handle.startsWith(n.id + '_')) {
+        return {
+          nodeId: n.id,
+          portName: handle.substring(n.id.length + 1)
+        }
+      }
+    }
+    // Fallback to lastIndexOf
+    const lastUnderscore = handle.lastIndexOf('_')
+    if (lastUnderscore > 0) {
+      return {
+        nodeId: handle.substring(0, lastUnderscore),
+        portName: handle.substring(lastUnderscore + 1)
+      }
+    }
+    return null
+  }
+  
   nodes.forEach(node => {
     if (node.type === 'subgraph') {
       const subgraph = subgraphs?.find(s => s.id === node.id)
@@ -60,28 +81,24 @@ export function expandSubgraphs(nodes, edges, subgraphs) {
       
       edges.forEach(e => {
         if (e.target === node.id && e.targetHandle) {
-          const lastUnderscore = e.targetHandle.lastIndexOf('_')
-          if (lastUnderscore > 0) {
-            const origNode = e.targetHandle.substring(0, lastUnderscore)
-            const origHandle = e.targetHandle.substring(lastUnderscore + 1)
+          const parsed = parseHandle(e.targetHandle, subgraph.nodes)
+          if (parsed) {
             expandedEdges.push({
               id: `reconnect-${Date.now()}-${Math.random()}`,
               source: e.source,
               sourceHandle: e.sourceHandle,
-              target: origNode,
-              targetHandle: origHandle
+              target: parsed.nodeId,
+              targetHandle: parsed.portName
             })
           }
         }
         if (e.source === node.id && e.sourceHandle) {
-          const lastUnderscore = e.sourceHandle.lastIndexOf('_')
-          if (lastUnderscore > 0) {
-            const origNode = e.sourceHandle.substring(0, lastUnderscore)
-            const origHandle = e.sourceHandle.substring(lastUnderscore + 1)
+          const parsed = parseHandle(e.sourceHandle, subgraph.nodes)
+          if (parsed) {
             expandedEdges.push({
               id: `reconnect-${Date.now()}-${Math.random()}`,
-              source: origNode,
-              sourceHandle: origHandle,
+              source: parsed.nodeId,
+              sourceHandle: parsed.portName,
               target: e.target,
               targetHandle: e.targetHandle
             })

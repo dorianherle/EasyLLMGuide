@@ -265,15 +265,40 @@ function FlowEditor({ nodes, setNodes, edges, setEdges, onNodeSelect, subgraphs,
     const inputs = []
     const outputs = []
     
+    // Helper to parse handle into nodeId and portName by matching against actual nodes
+    const parseHandle = (handle, contextNodes) => {
+      // Try to find a node whose ID is a prefix of the handle
+      for (const node of contextNodes) {
+        if (handle.startsWith(node.id + '_')) {
+          return {
+            nodeId: node.id,
+            portName: handle.substring(node.id.length + 1)
+          }
+        }
+      }
+      // Fallback to lastIndexOf for simple cases
+      const lastUnderscore = handle.lastIndexOf('_')
+      if (lastUnderscore > 0) {
+        return {
+          nodeId: handle.substring(0, lastUnderscore),
+          portName: handle.substring(lastUnderscore + 1)
+        }
+      }
+      return null
+    }
+    
+    const currentSubgraphData = subgraphs.find(s => s.id === currentSubgraphId)
+    const internalNodes = currentSubgraphData?.nodes || []
+    
     // For each exposed input, trace to find source
     Object.keys(currentNode?.data?.inputs || {}).forEach(handle => {
       const source = traceInputSource(currentSubgraphId, handle, currentLevel)
       if (source) {
-        const lastUnderscore = handle.lastIndexOf('_')
-        if (lastUnderscore > 0) {
+        const parsed = parseHandle(handle, internalNodes)
+        if (parsed) {
           inputs.push({
-            nodeId: handle.substring(0, lastUnderscore),
-            portName: handle.substring(lastUnderscore + 1),
+            nodeId: parsed.nodeId,
+            portName: parsed.portName,
             fromLabel: source
           })
         }
@@ -284,11 +309,11 @@ function FlowEditor({ nodes, setNodes, edges, setEdges, onNodeSelect, subgraphs,
     Object.keys(currentNode?.data?.outputs || {}).forEach(handle => {
       const target = traceOutputTarget(currentSubgraphId, handle, currentLevel)
       if (target) {
-        const lastUnderscore = handle.lastIndexOf('_')
-        if (lastUnderscore > 0) {
+        const parsed = parseHandle(handle, internalNodes)
+        if (parsed) {
           outputs.push({
-            nodeId: handle.substring(0, lastUnderscore),
-            portName: handle.substring(lastUnderscore + 1),
+            nodeId: parsed.nodeId,
+            portName: parsed.portName,
             toLabel: target
           })
         }
