@@ -263,9 +263,33 @@ function App() {
           return next
         })
       } else if (msg.type === 'node_done') {
+        const nodeId = msg.data?.node_id
         setHighlightedNode(null)
-        // Clear subgraph active state if no more packets inside
-        // We'll just let run_complete clear everything
+        
+        // Check if we should clear subgraph active state
+        // A subgraph is no longer active if no internal edges have packets
+        const parentSgs = findParentSubgraphs(nodeId)
+        if (parentSgs.length > 0) {
+          setEdgePackets(prev => {
+            // Check which parent subgraphs still have packets
+            const stillActive = new Set()
+            parentSgs.forEach(sgId => {
+              const sg = subgraphsRef.current.find(s => s.id === sgId)
+              if (sg?.edges?.some(e => prev[e.id]?.length > 0)) {
+                stillActive.add(sgId)
+              }
+            })
+            // Update active subgraphs
+            setActiveSubgraphs(prevActive => {
+              const next = new Set(prevActive)
+              parentSgs.forEach(sgId => {
+                if (!stillActive.has(sgId)) next.delete(sgId)
+              })
+              return next
+            })
+            return prev
+          })
+        }
       } else if (msg.type === 'terminal_output') {
         setTerminalOutputs(prev => [...prev, msg.data?.value])
       } else if (msg.type === 'log') {

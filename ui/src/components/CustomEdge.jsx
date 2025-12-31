@@ -29,10 +29,6 @@ function CustomEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosition, ta
   const packets = data?.packets || []
   const hasPackets = packets.length > 0
 
-  // Position packet at 60% along the edge (closer to target)
-  const packetX = sourceX + (targetX - sourceX) * 0.6
-  const packetY = sourceY + (targetY - sourceY) * 0.6
-
   return (
     <>
       <BaseEdge 
@@ -58,13 +54,13 @@ function CustomEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosition, ta
           </div>
         )}
         
-        {/* Data packet */}
+        {/* Data packet - use labelX/labelY which is center of bezier curve */}
         {hasPackets && (
           <div
             className="edge-packet"
             style={{
               position: 'absolute',
-              transform: `translate(-50%, -50%) translate(${packetX}px,${packetY}px)`,
+              transform: `translate(-50%, -50%) translate(${labelX}px,${labelY}px)`,
               pointerEvents: 'all',
             }}
             onClick={handlePacketClick}
