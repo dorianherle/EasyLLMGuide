@@ -131,11 +131,15 @@ function App() {
   // Run panel state
   const [showRunPanel, setShowRunPanel] = useState(false)
   const [availableTriggers, setAvailableTriggers] = useState([])
-  const [edgePackets, setEdgePackets] = useState({})  // { edgeId: [values] }
+  const edgePacketsRef = useRef({})  // { edgeId: [values] } - use ref for sync updates
+  const [edgePackets, setEdgePackets] = useState({})  // snapshot for React to detect changes
   const [terminalOutputs, setTerminalOutputs] = useState([])  // final outputs from terminal_output nodes
   const [selectedPacketData, setSelectedPacketData] = useState(null)  // packet data to show in code panel
   const [runError, setRunError] = useState(null)
   const [activeSubgraphs, setActiveSubgraphs] = useState(new Set())  // subgraphs with data inside
+  
+  // Helper to sync ref to state (creates new object for React change detection)
+  const syncEdgePackets = () => setEdgePackets({ ...edgePacketsRef.current })
   
   const fileInputRef = useRef(null)
   const importInputRef = useRef(null)
@@ -220,74 +224,103 @@ function App() {
         if (parentSgs.length > 0) {
           setActiveSubgraphs(prev => new Set([...prev, ...parentSgs]))
         }
-        
-        // Remove packets from edges going INTO this node (data consumed)
-        setEdgePackets(prev => {
-          const next = { ...prev }
-          const allEdges = [...edgesRef.current]
-          subgraphsRef.current.forEach(sg => {
-            if (sg.edges) allEdges.push(...sg.edges)
-          })
-          allEdges.forEach(e => {
-            // Direct edge to this node
-            if (e.target === nodeId && next[e.id]?.length > 0) {
-              next[e.id] = next[e.id].slice(1)
-              if (next[e.id].length === 0) delete next[e.id]
-            }
-            // Also consume from external edges going to parent subgraph
-            // (targetHandle format: internalNodeId_inputName)
-            if (parentSgs.includes(e.target) && e.targetHandle?.startsWith(nodeId + '_') && next[e.id]?.length > 0) {
-              next[e.id] = next[e.id].slice(1)
-              if (next[e.id].length === 0) delete next[e.id]
-            }
-          })
-          return next
-        })
       } else if (msg.type === 'node_output') {
         // Add packet to edges FROM this node's output branch
-        // Check both root edges and subgraph edges
         const sourceNode = msg.data?.node_id
         const branch = msg.data?.branch
         const value = msg.data?.value
-        setEdgePackets(prev => {
-          const next = { ...prev }
-          const allEdges = [...edgesRef.current]
-          subgraphsRef.current.forEach(sg => {
-            if (sg.edges) allEdges.push(...sg.edges)
-          })
-          allEdges.forEach(e => {
-            if (e.source === sourceNode && e.sourceHandle === branch) {
-              next[e.id] = [...(next[e.id] || []), value]
-            }
-          })
-          return next
+        const allEdges = [...edgesRef.current]
+        subgraphsRef.current.forEach(sg => {
+          if (sg.edges) allEdges.push(...sg.edges)
         })
+        
+        // Find parent subgraphs for this node (node might be inside a subgraph)
+        const parentSgs = findParentSubgraphs(sourceNode)
+        
+        let changed = false
+        allEdges.forEach(e => {
+          // Direct match: edge source is this node
+          if (e.source === sourceNode && e.sourceHandle === branch) {
+            edgePacketsRef.current[e.id] = [...(edgePacketsRef.current[e.id] || []), value]
+            changed = true
+          }
+          // Subgraph match: edge source is a parent subgraph with handle pointing to this node
+          // Handle can be nested: "subgraph_9kxv_add_1_result" or simple: "add_1_result"
+          else if (parentSgs.includes(e.source) && e.sourceHandle) {
+            const handle = e.sourceHandle
+            const pattern = `${sourceNode}_${branch}`
+            if (handle === pattern || handle.endsWith('_' + pattern)) {
+              edgePacketsRef.current[e.id] = [...(edgePacketsRef.current[e.id] || []), value]
+              changed = true
+            }
+          }
+        })
+        if (changed) syncEdgePackets()
       } else if (msg.type === 'node_done') {
         const nodeId = msg.data?.node_id
         setHighlightedNode(null)
         
-        // Check if we should clear subgraph active state
-        // A subgraph is no longer active if no internal edges have packets
+        // Build edge lookup map from ALL edges
+        const allEdges = [...edgesRef.current]
+        subgraphsRef.current.forEach(sg => {
+          if (sg.edges) allEdges.push(...sg.edges)
+        })
+        const edgeById = {}
+        allEdges.forEach(e => { edgeById[e.id] = e })
+        
+        // Consume packets from edges going INTO this node
         const parentSgs = findParentSubgraphs(nodeId)
+        let changed = false
+        
+        // Iterate over packets and consume those targeting this node
+        Object.keys(edgePacketsRef.current).forEach(edgeId => {
+          const edge = edgeById[edgeId]
+          if (!edge) return
+          
+          const packets = edgePacketsRef.current[edgeId]
+          if (!packets || packets.length === 0) return
+          
+          let shouldConsume = false
+          
+          // Direct edge to this node
+          if (edge.target === nodeId) {
+            shouldConsume = true
+          }
+          // Edge goes to a parent subgraph, and targetHandle contains this node's ID
+          else if (parentSgs.includes(edge.target) && edge.targetHandle) {
+            // targetHandle can be nested: "subgraph_9kxv_add_1_a" for nested subgraphs
+            // or simple: "add_1_a" for direct children
+            // Check if nodeId appears in the handle (with underscore before and after)
+            const handle = edge.targetHandle
+            if (handle.startsWith(nodeId + '_') || handle.includes('_' + nodeId + '_')) {
+              shouldConsume = true
+            }
+          }
+          
+          if (shouldConsume) {
+            edgePacketsRef.current[edgeId] = packets.slice(1)
+            if (edgePacketsRef.current[edgeId].length === 0) delete edgePacketsRef.current[edgeId]
+            changed = true
+          }
+        })
+        
+        if (changed) syncEdgePackets()
+        
+        // Check if we should clear subgraph active state
         if (parentSgs.length > 0) {
-          setEdgePackets(prev => {
-            // Check which parent subgraphs still have packets
-            const stillActive = new Set()
+          const stillActive = new Set()
+          parentSgs.forEach(sgId => {
+            const sg = subgraphsRef.current.find(s => s.id === sgId)
+            if (sg?.edges?.some(e => edgePacketsRef.current[e.id]?.length > 0)) {
+              stillActive.add(sgId)
+            }
+          })
+          setActiveSubgraphs(prevActive => {
+            const next = new Set(prevActive)
             parentSgs.forEach(sgId => {
-              const sg = subgraphsRef.current.find(s => s.id === sgId)
-              if (sg?.edges?.some(e => prev[e.id]?.length > 0)) {
-                stillActive.add(sgId)
-              }
+              if (!stillActive.has(sgId)) next.delete(sgId)
             })
-            // Update active subgraphs
-            setActiveSubgraphs(prevActive => {
-              const next = new Set(prevActive)
-              parentSgs.forEach(sgId => {
-                if (!stillActive.has(sgId)) next.delete(sgId)
-              })
-              return next
-            })
-            return prev
+            return next
           })
         }
       } else if (msg.type === 'terminal_output') {
@@ -303,14 +336,16 @@ function App() {
         setIsRunning(false)
         setAvailableTriggers([])
         setHighlightedNode(null)
-        setEdgePackets({})
+        edgePacketsRef.current = {}
+        syncEdgePackets()
         setActiveSubgraphs(new Set())
       } else if (msg.type === 'run_error') {
         setRunError(msg.data?.error)
         setIsRunning(false)
         setAvailableTriggers([])
         setHighlightedNode(null)
-        setEdgePackets({})
+        edgePacketsRef.current = {}
+        syncEdgePackets()
         setActiveSubgraphs(new Set())
       }
     })
@@ -344,7 +379,8 @@ function App() {
     }
     
     setRunError(null)
-    setEdgePackets({})
+    edgePacketsRef.current = {}
+    syncEdgePackets()
     setTerminalOutputs([])
     setLogMessages([])
     setAvailableTriggers([])
@@ -443,7 +479,8 @@ function App() {
   const handleCloseRunPanel = () => {
     setShowRunPanel(false)
     setAvailableTriggers([])
-    setEdgePackets({})
+    edgePacketsRef.current = {}
+    syncEdgePackets()
     setTerminalOutputs([])
     setRunError(null)
     setActiveSubgraphs(new Set())

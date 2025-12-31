@@ -9,19 +9,20 @@ import traceback
 import importlib.util
 import sys
 from pathlib import Path
-from typing import Any, Optional
+from typing import Optional
+from dataclasses import dataclass
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query, UploadFile, File
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
 import tempfile
 import shutil
 
 from core.spec_models import NodeSpec, InputDef, OutputDef, EdgeSpec
-from core.graph_topology import build_graph, validate_graph
+from core.graph_topology import build_graph
 from core.executor import Executor
 from core.exporter import export_graph
 from examples.node_specs import EXAMPLE_NODES
+from examples.example_graphs import EXAMPLES
 
 app = FastAPI()
 
@@ -32,6 +33,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
 
 def load_nodes_from_folder(folder_path: str) -> list[NodeSpec]:
     """Load node specs from Python files in a folder."""
@@ -51,7 +53,6 @@ def load_nodes_from_folder(folder_path: str) -> list[NodeSpec]:
             sys.modules[module_name] = module
             spec.loader.exec_module(module)
             
-            # Look for NODES list or any NodeSpec objects
             if hasattr(module, "NODES"):
                 nodes.extend(module.NODES)
             else:
@@ -61,6 +62,7 @@ def load_nodes_from_folder(folder_path: str) -> list[NodeSpec]:
                         nodes.append(attr)
     
     return nodes
+
 
 def build_node_info(specs: list[NodeSpec]) -> tuple[dict, list]:
     """Build node type registry and info list from specs."""
@@ -78,7 +80,8 @@ def build_node_info(specs: list[NodeSpec]) -> tuple[dict, list]:
         })
     return types, info
 
-# Default node type registry & info cache
+
+# Node type registry & info cache
 node_types, NODE_INFO = build_node_info(EXAMPLE_NODES)
 
 # Custom uploaded nodes
@@ -92,13 +95,15 @@ current_graph = None
 websocket_clients: list[WebSocket] = []
 
 
-class NodeInstance(BaseModel):
+@dataclass
+class NodeInstance:
     id: str
     type: str
 
 
-class GraphDefinition(BaseModel):
-    instances: list[NodeInstance]
+@dataclass
+class GraphDefinition:
+    instances: list[dict]
     edges: list[dict]
 
 
@@ -114,17 +119,13 @@ async def get_nodes():
 async def upload_nodes(files: list[UploadFile] = File(...)):
     global custom_nodes, custom_temp_dir, node_types, NODE_INFO
     
-    # Clean up old temp dir
     if custom_temp_dir and Path(custom_temp_dir).exists():
         shutil.rmtree(custom_temp_dir)
     
-    # Create new temp dir
     custom_temp_dir = tempfile.mkdtemp(prefix="nodes_")
     
-    # Save uploaded files
     for file in files:
         if file.filename and file.filename.endswith('.py'):
-            # Get just the filename, not the path
             filename = Path(file.filename).name
             if filename.startswith('_'):
                 continue
@@ -132,10 +133,8 @@ async def upload_nodes(files: list[UploadFile] = File(...)):
             content = await file.read()
             file_path.write_bytes(content)
     
-    # Load nodes from temp dir
     custom_nodes = load_nodes_from_folder(custom_temp_dir)
     
-    # Rebuild node info
     all_nodes = EXAMPLE_NODES + custom_nodes
     node_types, NODE_INFO = build_node_info(all_nodes)
     
@@ -158,23 +157,25 @@ async def clear_custom_nodes_endpoint():
 
 
 @app.post("/graph")
-async def save_graph(graph_def: GraphDefinition):
+async def save_graph(graph_def: dict):
     global current_graph
+    
+    instances = graph_def.get("instances", [])
+    edges = graph_def.get("edges", [])
     
     instance_specs = []
     
-    for inst in graph_def.instances:
-        # Skip any remaining subgraph nodes (should be expanded by frontend)
-        if inst.type == "subgraph":
+    for inst in instances:
+        if inst["type"] == "subgraph":
             continue
             
-        if inst.type not in node_types:
-            return {"status": "error", "errors": [f"Unknown node type: {inst.type}"]}
+        if inst["type"] not in node_types:
+            return {"status": "error", "errors": [f"Unknown node type: {inst['type']}"]}
         
-        base_spec = node_types[inst.type]
+        base_spec = node_types[inst["type"]]
         instance_spec = NodeSpec(
-            name=inst.id,
-            node_type=inst.type,
+            name=inst["id"],
+            node_type=inst["type"],
             category=base_spec.category,
             inputs=base_spec.inputs,
             outputs=base_spec.outputs,
@@ -184,20 +185,18 @@ async def save_graph(graph_def: GraphDefinition):
     
     valid_node_ids = {s.name for s in instance_specs}
     
-    # Only include edges where BOTH source and target are valid nodes
-    edges = [
+    edge_specs = [
         EdgeSpec(
             source_node=e["source"],
             source_branch=e["sourceHandle"],
             target_node=e["target"],
             target_input=e["targetHandle"]
-        ) for e in graph_def.edges
+        ) for e in edges
         if e["source"] in valid_node_ids and e["target"] in valid_node_ids
     ]
     
-    current_graph = build_graph(instance_specs, edges)
+    current_graph = build_graph(instance_specs, edge_specs)
     
-    # Skip validation for now
     return {"status": "ok", "errors": []}
 
 
@@ -215,8 +214,9 @@ async def notify_clients(event_type: str, data: dict):
 
 input_queue: asyncio.Queue = None
 
+
 async def input_handler():
-    """Wait for any trigger input from websocket, return (node_id, value)."""
+    """Wait for any trigger input from websocket."""
     global input_queue
     if input_queue is None:
         input_queue = asyncio.Queue()
@@ -231,7 +231,6 @@ async def run_graph():
     if current_graph is None:
         return {"error": "No graph defined"}
     
-    # Fresh queue for this run
     input_queue = asyncio.Queue()
     
     async def run_task():
@@ -250,10 +249,9 @@ async def run_graph():
 
 
 @app.post("/export")
-async def export_to_python(graph_def: GraphDefinition):
+async def export_to_python(graph_def: dict):
     """Export graph to standalone Python code."""
     
-    # Build node_types dict for the exporter
     node_type_info = {}
     for name, spec in node_types.items():
         node_type_info[name] = {
@@ -261,9 +259,10 @@ async def export_to_python(graph_def: GraphDefinition):
             "outputs": {k: {"type": v.type.__name__} for k, v in spec.outputs.items()},
         }
     
-    instances = [{"id": i.id, "type": i.type} for i in graph_def.instances]
+    instances = graph_def.get("instances", [])
+    edges = graph_def.get("edges", [])
     
-    code = export_graph(instances, graph_def.edges, node_type_info)
+    code = export_graph(instances, edges, node_type_info)
     
     return {"code": code}
 
@@ -285,64 +284,12 @@ async def websocket_events(websocket: WebSocket):
                         value = int(value)
                     except (ValueError, TypeError):
                         pass
-                    # Put into queue for executor to pick up
                     if input_queue:
                         await input_queue.put((node_id, value))
             except json.JSONDecodeError:
                 pass
     except WebSocketDisconnect:
         websocket_clients.remove(websocket)
-
-
-EXAMPLES = {
-    "even_odd": {
-        "name": "Even/Odd Flow",
-        "nodes": [
-            {"id": "in-1", "type": "custom", "position": {"x": 50, "y": 150}, "data": {"label": "terminal_input", "inputs": {"value": {"type": "int"}}, "outputs": {"out": {"type": "int"}}}},
-            {"id": "check-1", "type": "custom", "position": {"x": 260, "y": 150}, "data": {"label": "is_even", "inputs": {"value": {"type": "int"}}, "outputs": {"yes": {"type": "int"}, "no": {"type": "int"}}}},
-            {"id": "double-1", "type": "custom", "position": {"x": 480, "y": 50}, "data": {"label": "double", "inputs": {"value": {"type": "int"}}, "outputs": {"result": {"type": "int"}}}},
-            {"id": "triple-1", "type": "custom", "position": {"x": 480, "y": 250}, "data": {"label": "triple", "inputs": {"value": {"type": "int"}}, "outputs": {"result": {"type": "int"}}}},
-            {"id": "out-1", "type": "custom", "position": {"x": 700, "y": 150}, "data": {"label": "terminal_output", "inputs": {"value": {"type": "Any"}}, "outputs": {"done": {"type": "str"}}}}
-        ],
-        "edges": [
-            {"id": "e1", "source": "in-1", "target": "check-1", "sourceHandle": "out", "targetHandle": "value"},
-            {"id": "e2", "source": "check-1", "target": "double-1", "sourceHandle": "yes", "targetHandle": "value"},
-            {"id": "e3", "source": "check-1", "target": "triple-1", "sourceHandle": "no", "targetHandle": "value"},
-            {"id": "e4", "source": "double-1", "target": "out-1", "sourceHandle": "result", "targetHandle": "value"},
-            {"id": "e5", "source": "triple-1", "target": "out-1", "sourceHandle": "result", "targetHandle": "value"}
-        ]
-    },
-    "math_chain": {
-        "name": "Math Chain + Logger",
-        "nodes": [
-            {"id": "in-1", "type": "custom", "position": {"x": 50, "y": 100}, "data": {"label": "terminal_input", "inputs": {"value": {"type": "int"}}, "outputs": {"out": {"type": "int"}}}},
-            {"id": "sq-1", "type": "custom", "position": {"x": 250, "y": 100}, "data": {"label": "square", "inputs": {"value": {"type": "int"}}, "outputs": {"result": {"type": "int"}}}},
-            {"id": "dbl-1", "type": "custom", "position": {"x": 450, "y": 100}, "data": {"label": "double", "inputs": {"value": {"type": "int"}}, "outputs": {"result": {"type": "int"}}}},
-            {"id": "log-1", "type": "custom", "position": {"x": 450, "y": 220}, "data": {"label": "logger", "inputs": {"msg": {"type": "Any"}}, "outputs": {"logged": {"type": "str"}}}},
-            {"id": "out-1", "type": "custom", "position": {"x": 650, "y": 100}, "data": {"label": "terminal_output", "inputs": {"value": {"type": "Any"}}, "outputs": {"done": {"type": "str"}}}}
-        ],
-        "edges": [
-            {"id": "e1", "source": "in-1", "target": "sq-1", "sourceHandle": "out", "targetHandle": "value"},
-            {"id": "e2", "source": "sq-1", "target": "dbl-1", "sourceHandle": "result", "targetHandle": "value"},
-            {"id": "e3", "source": "sq-1", "target": "log-1", "sourceHandle": "result", "targetHandle": "msg"},
-            {"id": "e4", "source": "dbl-1", "target": "out-1", "sourceHandle": "result", "targetHandle": "value"}
-        ]
-    },
-    "branching": {
-        "name": "Positive/Negative",
-        "nodes": [
-            {"id": "in-1", "type": "custom", "position": {"x": 50, "y": 150}, "data": {"label": "terminal_input", "inputs": {"value": {"type": "int"}}, "outputs": {"out": {"type": "int"}}}},
-            {"id": "check-1", "type": "custom", "position": {"x": 260, "y": 150}, "data": {"label": "is_positive", "inputs": {"value": {"type": "int"}}, "outputs": {"positive": {"type": "int"}, "negative": {"type": "int"}, "zero": {"type": "int"}}}},
-            {"id": "out-1", "type": "custom", "position": {"x": 500, "y": 150}, "data": {"label": "terminal_output", "inputs": {"value": {"type": "Any"}}, "outputs": {"done": {"type": "str"}}}}
-        ],
-        "edges": [
-            {"id": "e1", "source": "in-1", "target": "check-1", "sourceHandle": "out", "targetHandle": "value"},
-            {"id": "e2", "source": "check-1", "target": "out-1", "sourceHandle": "positive", "targetHandle": "value"},
-            {"id": "e3", "source": "check-1", "target": "out-1", "sourceHandle": "negative", "targetHandle": "value"},
-            {"id": "e4", "source": "check-1", "target": "out-1", "sourceHandle": "zero", "targetHandle": "value"}
-        ]
-    }
-}
 
 
 @app.get("/examples")
