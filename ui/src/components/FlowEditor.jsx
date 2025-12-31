@@ -306,9 +306,8 @@ function FlowEditor({ nodes, setNodes, edges, setEdges, onNodeSelect, subgraphs,
     const avgX = selectedNodeData.reduce((sum, n) => sum + n.position.x, 0) / selectedNodeData.length
     const avgY = selectedNodeData.reduce((sum, n) => sum + n.position.y, 0) / selectedNodeData.length
 
-    // Count existing subgraphs for sequential ID
-    const subgraphCount = currentContext.nodes.filter(n => n.type === 'subgraph').length
-    const subgraphId = `subgraph_${subgraphCount + 1}`
+    // Use random ID to ensure uniqueness
+    const subgraphId = `subgraph_${shortId()}`
     const subgraphNode = {
       id: subgraphId,
       type: 'subgraph',
