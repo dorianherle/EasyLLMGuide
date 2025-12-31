@@ -5,7 +5,8 @@ import {
   Controls,
   useNodesState,
   useEdgesState,
-  addEdge
+  addEdge,
+  useViewport
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import CustomNode from './CustomNode'
@@ -22,30 +23,21 @@ const edgeTypes = { custom: CustomEdge }
 const shortId = () => Math.random().toString(36).substring(2, 6)
 
 // Ghost edges component - shows faded connections to outside world
-function GhostEdges({ nodes, inputs, outputs, reactFlowInstance }) {
-  const [paths, setPaths] = useState([])
+function GhostEdges({ nodes, inputs, outputs }) {
+  // Get viewport transform from React Flow (reactive)
+  const { x: vpX, y: vpY, zoom } = useViewport()
   
-  useEffect(() => {
-    if (!reactFlowInstance.current) return
-    
-    const newPaths = []
-    const viewport = reactFlowInstance.current.getViewport()
-    const bounds = reactFlowInstance.current.getNodes()
-    
-    // Calculate viewport bounds in flow coordinates
-    const container = document.querySelector('.react-flow')
-    if (!container) return
-    const rect = container.getBoundingClientRect()
+  // Build paths for ghost edges
+  const paths = useMemo(() => {
+    const result = []
     
     // Helper to get node port position
     const getPortPos = (nodeId, portName, isInput) => {
       const node = nodes.find(n => n.id === nodeId)
       if (!node) return null
       
-      // Approximate port position (left side for inputs, right for outputs)
       const nodeWidth = 180
-      const nodeHeight = 80
-      const portOffset = 40  // rough offset for port from top
+      const portOffset = 40
       
       return {
         x: node.position.x + (isInput ? 0 : nodeWidth),
@@ -53,68 +45,67 @@ function GhostEdges({ nodes, inputs, outputs, reactFlowInstance }) {
       }
     }
     
-    // Create ghost edges for inputs (coming from left)
+    // Ghost edges for inputs (coming from left)
     inputs.forEach((inp, i) => {
       const pos = getPortPos(inp.nodeId, inp.portName, true)
       if (!pos) return
       
-      const startX = pos.x - 200  // Start off-screen to the left
-      const startY = pos.y
       const endX = pos.x
       const endY = pos.y
+      const startX = endX - 150
+      const startY = endY
       
-      newPaths.push({
+      result.push({
         id: `ghost-in-${i}`,
         type: 'input',
-        d: `M ${startX} ${startY} C ${startX + 80} ${startY}, ${endX - 80} ${endY}, ${endX} ${endY}`,
-        label: inp.fromLabel
+        d: `M ${startX} ${startY} C ${startX + 50} ${startY}, ${endX - 50} ${endY}, ${endX} ${endY}`
       })
     })
     
-    // Create ghost edges for outputs (going to right)
+    // Ghost edges for outputs (going to right)
     outputs.forEach((out, i) => {
       const pos = getPortPos(out.nodeId, out.portName, false)
       if (!pos) return
       
       const startX = pos.x
       const startY = pos.y
-      const endX = pos.x + 200  // End off-screen to the right
-      const endY = pos.y
+      const endX = startX + 150
+      const endY = startY
       
-      newPaths.push({
+      result.push({
         id: `ghost-out-${i}`,
         type: 'output',
-        d: `M ${startX} ${startY} C ${startX + 80} ${startY}, ${endX - 80} ${endY}, ${endX} ${endY}`,
-        label: out.toLabel
+        d: `M ${startX} ${startY} C ${startX + 50} ${startY}, ${endX - 50} ${endY}, ${endX} ${endY}`
       })
     })
     
-    setPaths(newPaths)
-  }, [nodes, inputs, outputs, reactFlowInstance])
+    return result
+  }, [nodes, inputs, outputs])
   
   return (
-    <svg className="ghost-edges-layer">
+    <svg className="ghost-edges-layer" style={{ overflow: 'visible' }}>
       <defs>
         <linearGradient id="ghost-fade-left" x1="0%" y1="0%" x2="100%" y2="0%">
           <stop offset="0%" stopColor="#8957e5" stopOpacity="0" />
-          <stop offset="100%" stopColor="#8957e5" stopOpacity="0.4" />
+          <stop offset="100%" stopColor="#8957e5" stopOpacity="0.5" />
         </linearGradient>
         <linearGradient id="ghost-fade-right" x1="0%" y1="0%" x2="100%" y2="0%">
-          <stop offset="0%" stopColor="#8957e5" stopOpacity="0.4" />
+          <stop offset="0%" stopColor="#8957e5" stopOpacity="0.5" />
           <stop offset="100%" stopColor="#8957e5" stopOpacity="0" />
         </linearGradient>
       </defs>
-      {paths.map(p => (
-        <g key={p.id}>
+      <g transform={`translate(${vpX}, ${vpY}) scale(${zoom})`}>
+        {paths.map(p => (
           <path
+            key={p.id}
             d={p.d}
             fill="none"
             stroke={`url(#ghost-fade-${p.type === 'input' ? 'left' : 'right'})`}
-            strokeWidth="2"
-            strokeDasharray="6 4"
+            strokeWidth={2 / zoom}
+            strokeDasharray={`${6 / zoom} ${4 / zoom}`}
           />
-        </g>
-      ))}
+        ))}
+      </g>
     </svg>
   )
 }
@@ -637,7 +628,6 @@ function FlowEditor({ nodes, setNodes, edges, setEdges, onNodeSelect, subgraphs,
             nodes={flowNodes} 
             inputs={externalConnections.inputs} 
             outputs={externalConnections.outputs}
-            reactFlowInstance={reactFlowInstance}
           />
         )}
       </ReactFlow>
