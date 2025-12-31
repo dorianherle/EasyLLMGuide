@@ -222,7 +222,6 @@ function App() {
         }
         
         // Remove packets from edges going INTO this node (data consumed)
-        // Check both root edges and subgraph edges
         setEdgePackets(prev => {
           const next = { ...prev }
           const allEdges = [...edgesRef.current]
@@ -230,7 +229,14 @@ function App() {
             if (sg.edges) allEdges.push(...sg.edges)
           })
           allEdges.forEach(e => {
+            // Direct edge to this node
             if (e.target === nodeId && next[e.id]?.length > 0) {
+              next[e.id] = next[e.id].slice(1)
+              if (next[e.id].length === 0) delete next[e.id]
+            }
+            // Also consume from external edges going to parent subgraph
+            // (targetHandle format: internalNodeId_inputName)
+            if (parentSgs.includes(e.target) && e.targetHandle?.startsWith(nodeId + '_') && next[e.id]?.length > 0) {
               next[e.id] = next[e.id].slice(1)
               if (next[e.id].length === 0) delete next[e.id]
             }
