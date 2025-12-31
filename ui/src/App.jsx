@@ -135,6 +135,7 @@ function App() {
   const [terminalOutputs, setTerminalOutputs] = useState([])  // final outputs from terminal_output nodes
   const [selectedPacketData, setSelectedPacketData] = useState(null)  // packet data to show in code panel
   const [runError, setRunError] = useState(null)
+  const [activeSubgraphs, setActiveSubgraphs] = useState(new Set())  // subgraphs with data inside
   
   const fileInputRef = useRef(null)
   const importInputRef = useRef(null)
@@ -173,9 +174,31 @@ function App() {
     }
   }, [])
 
-  // Need access to current edges in websocket handler
+  // Need access to current state in websocket handler
   const edgesRef = useRef(edges)
+  const subgraphsRef = useRef(subgraphs)
   useEffect(() => { edgesRef.current = edges }, [edges])
+  useEffect(() => { subgraphsRef.current = subgraphs }, [subgraphs])
+  
+  // Find which subgraph(s) contain a node (recursively)
+  const findParentSubgraphs = useCallback((nodeId) => {
+    const parents = []
+    const check = (sgs, path = []) => {
+      for (const sg of sgs) {
+        if (sg.nodes?.some(n => n.id === nodeId)) {
+          parents.push(...path, sg.id)
+        }
+        // Check nested subgraphs
+        const nestedSgs = sg.nodes?.filter(n => n.type === 'subgraph') || []
+        if (nestedSgs.length > 0) {
+          const nestedData = nestedSgs.map(n => sgs.find(s => s.id === n.id)).filter(Boolean)
+          check(nestedData, [...path, sg.id])
+        }
+      }
+    }
+    check(subgraphsRef.current)
+    return parents
+  }, [])
 
   useEffect(() => {
     const ws = connectWebSocket((msg) => {
@@ -189,14 +212,26 @@ function App() {
           }]
         })
       } else if (msg.type === 'node_start') {
-        setHighlightedNode(msg.data?.node_id)
-        // Remove packets from edges going INTO this node (data consumed)
         const nodeId = msg.data?.node_id
+        setHighlightedNode(nodeId)
+        
+        // Track which subgraphs have active data
+        const parentSgs = findParentSubgraphs(nodeId)
+        if (parentSgs.length > 0) {
+          setActiveSubgraphs(prev => new Set([...prev, ...parentSgs]))
+        }
+        
+        // Remove packets from edges going INTO this node (data consumed)
+        // Check both root edges and subgraph edges
         setEdgePackets(prev => {
           const next = { ...prev }
-          edgesRef.current.forEach(e => {
+          const allEdges = [...edgesRef.current]
+          subgraphsRef.current.forEach(sg => {
+            if (sg.edges) allEdges.push(...sg.edges)
+          })
+          allEdges.forEach(e => {
             if (e.target === nodeId && next[e.id]?.length > 0) {
-              next[e.id] = next[e.id].slice(1)  // Remove first packet (consumed)
+              next[e.id] = next[e.id].slice(1)
               if (next[e.id].length === 0) delete next[e.id]
             }
           })
@@ -204,12 +239,17 @@ function App() {
         })
       } else if (msg.type === 'node_output') {
         // Add packet to edges FROM this node's output branch
+        // Check both root edges and subgraph edges
         const sourceNode = msg.data?.node_id
         const branch = msg.data?.branch
         const value = msg.data?.value
         setEdgePackets(prev => {
           const next = { ...prev }
-          edgesRef.current.forEach(e => {
+          const allEdges = [...edgesRef.current]
+          subgraphsRef.current.forEach(sg => {
+            if (sg.edges) allEdges.push(...sg.edges)
+          })
+          allEdges.forEach(e => {
             if (e.source === sourceNode && e.sourceHandle === branch) {
               next[e.id] = [...(next[e.id] || []), value]
             }
@@ -218,6 +258,8 @@ function App() {
         })
       } else if (msg.type === 'node_done') {
         setHighlightedNode(null)
+        // Clear subgraph active state if no more packets inside
+        // We'll just let run_complete clear everything
       } else if (msg.type === 'terminal_output') {
         setTerminalOutputs(prev => [...prev, msg.data?.value])
       } else if (msg.type === 'log') {
@@ -232,12 +274,14 @@ function App() {
         setAvailableTriggers([])
         setHighlightedNode(null)
         setEdgePackets({})
+        setActiveSubgraphs(new Set())
       } else if (msg.type === 'run_error') {
         setRunError(msg.data?.error)
         setIsRunning(false)
         setAvailableTriggers([])
         setHighlightedNode(null)
         setEdgePackets({})
+        setActiveSubgraphs(new Set())
       }
     })
     return () => ws.close()
@@ -372,6 +416,7 @@ function App() {
     setEdgePackets({})
     setTerminalOutputs([])
     setRunError(null)
+    setActiveSubgraphs(new Set())
   }
 
   const handleExport = async () => {
@@ -458,6 +503,7 @@ function App() {
             highlightedNode={highlightedNode}
             edgePackets={edgePackets}
             onPacketClick={handlePacketClick}
+            activeSubgraphs={activeSubgraphs}
           />
         </div>
         

@@ -21,7 +21,7 @@ const edgeTypes = { custom: CustomEdge }
 // Generate short random ID for edges
 const shortId = () => Math.random().toString(36).substring(2, 6)
 
-function FlowEditor({ nodes, setNodes, edges, setEdges, onNodeSelect, subgraphs, setSubgraphs, highlightedNode, edgePackets = {}, onPacketClick }) {
+function FlowEditor({ nodes, setNodes, edges, setEdges, onNodeSelect, subgraphs, setSubgraphs, highlightedNode, edgePackets = {}, onPacketClick, activeSubgraphs = new Set() }) {
   const [flowNodes, setFlowNodes, onNodesChange] = useNodesState([])
   const [flowEdges, setFlowEdges, onEdgesChange] = useEdgesState([])
   const [contextMenu, setContextMenu] = useState(null)
@@ -86,26 +86,24 @@ function FlowEditor({ nodes, setNodes, edges, setEdges, onNodeSelect, subgraphs,
 
   // Sync flow display with current context
   useEffect(() => {
-    setFlowNodes(currentContext.nodes.map(n => ({ 
-      ...n, 
-      selected: selectedIds.has(n.id),
-      className: n.id === highlightedNode ? 'highlighted' : ''
-    })))
+    setFlowNodes(currentContext.nodes.map(n => {
+      let className = ''
+      if (n.id === highlightedNode) className = 'highlighted'
+      else if (n.type === 'subgraph' && activeSubgraphs.has(n.id)) className = 'subgraph-active'
+      return { ...n, selected: selectedIds.has(n.id), className }
+    }))
     
-    if (currentContext.isRoot) {
-      setFlowEdges(currentContext.edges.map(e => ({ 
-        ...e, 
-        type: 'custom',
-        data: { 
-          ...e.data, 
-          packets: edgePackets[e.id] || [],
-          onPacketClick 
-        }
-      })))
-    } else {
-      setFlowEdges(currentContext.edges.map(e => ({ ...e, type: 'custom' })))
-    }
-  }, [currentContext, selectedIds, highlightedNode, edgePackets, onPacketClick, setFlowNodes, setFlowEdges])
+    // Show packets on all edges (root or inside subgraph)
+    setFlowEdges(currentContext.edges.map(e => ({ 
+      ...e, 
+      type: 'custom',
+      data: { 
+        ...e.data, 
+        packets: edgePackets[e.id] || [],
+        onPacketClick 
+      }
+    })))
+  }, [currentContext, selectedIds, highlightedNode, edgePackets, onPacketClick, activeSubgraphs, setFlowNodes, setFlowEdges])
 
   const handleNodesChange = useCallback((changes) => {
     onNodesChange(changes)
@@ -232,8 +230,8 @@ function FlowEditor({ nodes, setNodes, edges, setEdges, onNodeSelect, subgraphs,
     
     if (node.type === 'subgraph') {
       items.push(
-        { label: 'Edit Subgraph', icon: '✏️', action: () => handleEditSubgraph(node) },
-        { label: 'Expand Subgraph', icon: '📤', action: () => handleExpandSubgraph(node) },
+        { label: 'Inspect', icon: '🔍', action: () => handleEditSubgraph(node) },
+        { label: 'Expand', icon: '📤', action: () => handleExpandSubgraph(node) },
         { divider: true }
       )
     }

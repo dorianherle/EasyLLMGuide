@@ -808,6 +808,22 @@ body {
   box-shadow: 0 0 0 2px rgba(163, 113, 247, 0.3);
 }
 
+/* Active subgraph - data flowing inside */
+.react-flow__node.subgraph-active .subgraph-node {
+  border-color: #58a6ff;
+  box-shadow: 0 0 0 3px rgba(88, 166, 255, 0.4), 0 0 20px rgba(88, 166, 255, 0.3);
+  animation: subgraph-pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes subgraph-pulse {
+  0%, 100% { box-shadow: 0 0 0 3px rgba(88, 166, 255, 0.4), 0 0 20px rgba(88, 166, 255, 0.3); }
+  50% { box-shadow: 0 0 0 5px rgba(88, 166, 255, 0.3), 0 0 30px rgba(88, 166, 255, 0.5); }
+}
+
+.react-flow__node.subgraph-active .subgraph-header {
+  background: linear-gradient(135deg, #1f4e6e 0%, #1a3350 100%);
+}
+
 .subgraph-header {
   background: #2d1f4e;
 }
