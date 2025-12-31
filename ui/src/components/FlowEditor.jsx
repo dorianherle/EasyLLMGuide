@@ -21,6 +21,104 @@ const edgeTypes = { custom: CustomEdge }
 // Generate short random ID for edges
 const shortId = () => Math.random().toString(36).substring(2, 6)
 
+// Ghost edges component - shows faded connections to outside world
+function GhostEdges({ nodes, inputs, outputs, reactFlowInstance }) {
+  const [paths, setPaths] = useState([])
+  
+  useEffect(() => {
+    if (!reactFlowInstance.current) return
+    
+    const newPaths = []
+    const viewport = reactFlowInstance.current.getViewport()
+    const bounds = reactFlowInstance.current.getNodes()
+    
+    // Calculate viewport bounds in flow coordinates
+    const container = document.querySelector('.react-flow')
+    if (!container) return
+    const rect = container.getBoundingClientRect()
+    
+    // Helper to get node port position
+    const getPortPos = (nodeId, portName, isInput) => {
+      const node = nodes.find(n => n.id === nodeId)
+      if (!node) return null
+      
+      // Approximate port position (left side for inputs, right for outputs)
+      const nodeWidth = 180
+      const nodeHeight = 80
+      const portOffset = 40  // rough offset for port from top
+      
+      return {
+        x: node.position.x + (isInput ? 0 : nodeWidth),
+        y: node.position.y + portOffset
+      }
+    }
+    
+    // Create ghost edges for inputs (coming from left)
+    inputs.forEach((inp, i) => {
+      const pos = getPortPos(inp.nodeId, inp.portName, true)
+      if (!pos) return
+      
+      const startX = pos.x - 200  // Start off-screen to the left
+      const startY = pos.y
+      const endX = pos.x
+      const endY = pos.y
+      
+      newPaths.push({
+        id: `ghost-in-${i}`,
+        type: 'input',
+        d: `M ${startX} ${startY} C ${startX + 80} ${startY}, ${endX - 80} ${endY}, ${endX} ${endY}`,
+        label: inp.fromLabel
+      })
+    })
+    
+    // Create ghost edges for outputs (going to right)
+    outputs.forEach((out, i) => {
+      const pos = getPortPos(out.nodeId, out.portName, false)
+      if (!pos) return
+      
+      const startX = pos.x
+      const startY = pos.y
+      const endX = pos.x + 200  // End off-screen to the right
+      const endY = pos.y
+      
+      newPaths.push({
+        id: `ghost-out-${i}`,
+        type: 'output',
+        d: `M ${startX} ${startY} C ${startX + 80} ${startY}, ${endX - 80} ${endY}, ${endX} ${endY}`,
+        label: out.toLabel
+      })
+    })
+    
+    setPaths(newPaths)
+  }, [nodes, inputs, outputs, reactFlowInstance])
+  
+  return (
+    <svg className="ghost-edges-layer">
+      <defs>
+        <linearGradient id="ghost-fade-left" x1="0%" y1="0%" x2="100%" y2="0%">
+          <stop offset="0%" stopColor="#8957e5" stopOpacity="0" />
+          <stop offset="100%" stopColor="#8957e5" stopOpacity="0.4" />
+        </linearGradient>
+        <linearGradient id="ghost-fade-right" x1="0%" y1="0%" x2="100%" y2="0%">
+          <stop offset="0%" stopColor="#8957e5" stopOpacity="0.4" />
+          <stop offset="100%" stopColor="#8957e5" stopOpacity="0" />
+        </linearGradient>
+      </defs>
+      {paths.map(p => (
+        <g key={p.id}>
+          <path
+            d={p.d}
+            fill="none"
+            stroke={`url(#ghost-fade-${p.type === 'input' ? 'left' : 'right'})`}
+            strokeWidth="2"
+            strokeDasharray="6 4"
+          />
+        </g>
+      ))}
+    </svg>
+  )
+}
+
 function FlowEditor({ nodes, setNodes, edges, setEdges, onNodeSelect, subgraphs, setSubgraphs, highlightedNode, edgePackets = {}, onPacketClick, activeSubgraphs = new Set() }) {
   const [flowNodes, setFlowNodes, onNodesChange] = useNodesState([])
   const [flowEdges, setFlowEdges, onEdgesChange] = useEdgesState([])
@@ -54,6 +152,46 @@ function FlowEditor({ nodes, setNodes, edges, setEdges, onNodeSelect, subgraphs,
       return sg?.name || id
     })
   }, [editPath, subgraphs])
+
+  // Get external connections for current subgraph (for ghost edges)
+  const externalConnections = useMemo(() => {
+    if (editPath.length === 0) return { inputs: [], outputs: [] }
+    
+    const currentSubgraphId = editPath[editPath.length - 1]
+    // Find parent context edges that connect to/from this subgraph
+    const parentEdges = editPath.length === 1 ? edges : 
+      (subgraphs.find(s => s.id === editPath[editPath.length - 2])?.edges || [])
+    
+    const inputs = []  // { nodeId, portName, fromLabel }
+    const outputs = [] // { nodeId, portName, toLabel }
+    
+    parentEdges.forEach(e => {
+      // Incoming to subgraph
+      if (e.target === currentSubgraphId && e.targetHandle) {
+        const lastUnderscore = e.targetHandle.lastIndexOf('_')
+        if (lastUnderscore > 0) {
+          inputs.push({
+            nodeId: e.targetHandle.substring(0, lastUnderscore),
+            portName: e.targetHandle.substring(lastUnderscore + 1),
+            fromLabel: e.source
+          })
+        }
+      }
+      // Outgoing from subgraph
+      if (e.source === currentSubgraphId && e.sourceHandle) {
+        const lastUnderscore = e.sourceHandle.lastIndexOf('_')
+        if (lastUnderscore > 0) {
+          outputs.push({
+            nodeId: e.sourceHandle.substring(0, lastUnderscore),
+            portName: e.sourceHandle.substring(lastUnderscore + 1),
+            toLabel: e.target
+          })
+        }
+      }
+    })
+    
+    return { inputs, outputs }
+  }, [editPath, edges, subgraphs])
 
   // Update nodes/edges in current context
   const updateCurrentContext = useCallback((newNodes, newEdges) => {
@@ -492,6 +630,16 @@ function FlowEditor({ nodes, setNodes, edges, setEdges, onNodeSelect, subgraphs,
       >
         <Background color={editPath.length > 0 ? '#3d2e5c' : '#30363d'} gap={16} size={1} />
         <Controls />
+        
+        {/* Ghost edges showing external connections */}
+        {editPath.length > 0 && (externalConnections.inputs.length > 0 || externalConnections.outputs.length > 0) && (
+          <GhostEdges 
+            nodes={flowNodes} 
+            inputs={externalConnections.inputs} 
+            outputs={externalConnections.outputs}
+            reactFlowInstance={reactFlowInstance}
+          />
+        )}
       </ReactFlow>
       
       {contextMenu && (
