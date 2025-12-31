@@ -483,6 +483,8 @@ function FlowEditor({ nodes, setNodes, edges, setEdges, onNodeSelect, subgraphs,
         deleteKeyCode={['Backspace', 'Delete']}
         panOnDrag
         selectionOnDrag={false}
+        minZoom={0.01}
+        maxZoom={10}
       >
         <Background color={editPath.length > 0 ? '#3d2e5c' : '#30363d'} gap={16} size={1} />
         <Controls />

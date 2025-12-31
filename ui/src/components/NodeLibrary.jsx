@@ -1,6 +1,9 @@
+import { useRef } from 'react'
 import { getTypeColor } from '../utils/typeColors'
 
-function NodeLibrary({ specs, onCollapse }) {
+function NodeLibrary({ specs, onCollapse, folderPath, onFolderChange, style }) {
+  const folderInputRef = useRef(null)
+
   const onDragStart = (event, spec) => {
     event.dataTransfer.setData('application/json', JSON.stringify(spec))
     event.dataTransfer.effectAllowed = 'move'
@@ -26,12 +29,45 @@ function NodeLibrary({ specs, onCollapse }) {
     return a.localeCompare(b)
   })
 
+  const handleFolderSelect = (e) => {
+    const files = e.target.files
+    if (files && files.length > 0) {
+      // Get folder path from webkitRelativePath
+      const firstFile = files[0]
+      const relativePath = firstFile.webkitRelativePath
+      const folderName = relativePath.split('/')[0]
+      onFolderChange(folderName, files)
+    }
+    e.target.value = ''
+  }
+
+  const handleClearFolder = () => {
+    onFolderChange(null, null)
+  }
+
   return (
-    <div className="node-library">
+    <div className="node-library" style={style}>
       <div className="panel-header">
         <h2>Nodes</h2>
+        <button className="folder-btn" onClick={() => folderInputRef.current?.click()} title="Load nodes folder">📁</button>
+        {folderPath && <button className="clear-folder-btn" onClick={handleClearFolder} title="Clear custom nodes">✕</button>}
         <button className="collapse-btn" onClick={onCollapse} title="Collapse">×</button>
+        <input 
+          ref={folderInputRef}
+          type="file" 
+          webkitdirectory="" 
+          directory=""
+          onChange={handleFolderSelect}
+          style={{ display: 'none' }}
+        />
       </div>
+      
+      {folderPath && (
+        <div className="current-folder-bar">
+          📂 {folderPath}
+        </div>
+      )}
+      
       <div className="panel-content">
         {sortedCategories.map((category) => (
           <div key={category} className="node-category">

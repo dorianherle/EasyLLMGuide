@@ -1,6 +1,6 @@
 import Editor from '@monaco-editor/react'
 
-function CodePanel({ node, packetData, onCollapse }) {
+function CodePanel({ node, packetData, onCollapse, style }) {
   // Show packet data if selected, otherwise show node code
   const showingPacket = packetData && packetData.length > 0
 
@@ -21,7 +21,7 @@ function CodePanel({ node, packetData, onCollapse }) {
   }
 
   return (
-    <div className="code-panel">
+    <div className="code-panel" style={style}>
       <div className="panel-header">
         <div>
           <h3>{showingPacket ? 'Data' : (node ? node.name : 'Code')}</h3>

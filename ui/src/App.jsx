@@ -4,12 +4,42 @@ import NodeLibrary from './components/NodeLibrary'
 import CodePanel from './components/CodePanel'
 import LogPanel from './components/LogPanel'
 import RunPanel from './components/RunPanel'
-import { getNodes, saveGraph, runGraph, connectWebSocket, sendInputResponse, getExamples, getExample, exportGraph } from './utils/api'
+import ResizeHandle from './components/ResizeHandle'
+import { getNodes, saveGraph, runGraph, connectWebSocket, sendInputResponse, getExamples, getExample, exportGraph, uploadNodeFiles, clearCustomNodes } from './utils/api'
+
+const STORAGE_KEY = 'easyLLMGuide_graph'
+
+// Load state from localStorage
+function loadFromStorage() {
+  try {
+    const saved = localStorage.getItem(STORAGE_KEY)
+    if (saved) {
+      return JSON.parse(saved)
+    }
+  } catch {}
+  return null
+}
+
+// Save state to localStorage
+function saveToStorage(nodes, edges, subgraphs, folderPath) {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ nodes, edges, subgraphs, folderPath }))
+  } catch {}
+}
 
 // Normalize all IDs in a graph to clean sequential format
-function normalizeGraph(nodes, edges, subgraphs = []) {
+function normalizeGraph(nodes, edges, subgraphs = [], existingNodes = []) {
   const idMap = {}  // oldId -> newId
   const typeCounts = {}
+  
+  // Count existing nodes to continue numbering
+  existingNodes.forEach(node => {
+    const nodeType = node.type === 'subgraph' ? 'subgraph' : node.data.label
+    const match = node.id.match(/_(\d+)$/)
+    if (match) {
+      typeCounts[nodeType] = Math.max(typeCounts[nodeType] || 0, parseInt(match[1]))
+    }
+  })
   
   // First pass: build ID mapping for nodes
   const newNodes = nodes.map(node => {
@@ -21,9 +51,9 @@ function normalizeGraph(nodes, edges, subgraphs = []) {
   })
   
   // Second pass: update edge references
-  const newEdges = edges.map(edge => ({
+  const newEdges = edges.map((edge, i) => ({
     ...edge,
-    id: `e_${edges.indexOf(edge) + 1}`,
+    id: `e_${Date.now()}_${i}`,
     source: idMap[edge.source] || edge.source,
     target: idMap[edge.target] || edge.target
   }))
@@ -80,10 +110,13 @@ function normalizeGraph(nodes, edges, subgraphs = []) {
 }
 
 function App() {
+  // Load initial state from localStorage
+  const savedState = loadFromStorage()
+  
   const [selectedNode, setSelectedNode] = useState(null)
-  const [nodes, setNodes] = useState([])
-  const [edges, setEdges] = useState([])
-  const [subgraphs, setSubgraphs] = useState([])
+  const [nodes, setNodes] = useState(savedState?.nodes || [])
+  const [edges, setEdges] = useState(savedState?.edges || [])
+  const [subgraphs, setSubgraphs] = useState(savedState?.subgraphs || [])
   const [nodeSpecs, setNodeSpecs] = useState([])
   const [logMessages, setLogMessages] = useState([])
   const [isRunning, setIsRunning] = useState(false)
@@ -93,6 +126,7 @@ function App() {
   const [showLog, setShowLog] = useState(false)
   const [connected, setConnected] = useState(false)
   const [examplesList, setExamplesList] = useState({})
+  const [folderPath, setFolderPath] = useState(savedState?.folderPath || null)
   
   // Run panel state
   const [showRunPanel, setShowRunPanel] = useState(false)
@@ -103,6 +137,17 @@ function App() {
   const [runError, setRunError] = useState(null)
   
   const fileInputRef = useRef(null)
+  const importInputRef = useRef(null)
+  
+  // Panel widths
+  const [libraryWidth, setLibraryWidth] = useState(220)
+  const [codeWidth, setCodeWidth] = useState(400)
+  const [logWidth, setLogWidth] = useState(300)
+
+  // Save to localStorage whenever state changes
+  useEffect(() => {
+    saveToStorage(nodes, edges, subgraphs, folderPath)
+  }, [nodes, edges, subgraphs, folderPath])
 
   useEffect(() => {
     getNodes().then(data => {
@@ -110,6 +155,22 @@ function App() {
       setConnected(true)
     }).catch(() => setConnected(false))
     getExamples().then(setExamplesList).catch(() => {})
+  }, [])
+
+  const handleFolderChange = useCallback(async (folderName, files) => {
+    if (!folderName || !files) {
+      // Clear custom nodes
+      await clearCustomNodes()
+      setFolderPath(null)
+      const data = await getNodes()
+      setNodeSpecs(data)
+    } else {
+      // Upload files and reload nodes
+      await uploadNodeFiles(files)
+      setFolderPath(folderName)
+      const data = await getNodes()
+      setNodeSpecs(data)
+    }
   }, [])
 
   // Need access to current edges in websocket handler
@@ -265,6 +326,37 @@ function App() {
     e.target.value = ''
   }
 
+  const handleImport = (e) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    const reader = new FileReader()
+    reader.onload = (event) => {
+      try {
+        const data = JSON.parse(event.target.result)
+        // Offset imported nodes to the right
+        const offsetX = nodes.length > 0 
+          ? Math.max(...nodes.map(n => n.position.x)) + 300 
+          : 0
+        const offsetNodes = (data.nodes || []).map(n => ({
+          ...n,
+          position: { x: n.position.x + offsetX, y: n.position.y }
+        }))
+        const normalized = normalizeGraph(offsetNodes, data.edges || [], data.subgraphs || [], nodes)
+        setNodes([...nodes, ...normalized.nodes])
+        setEdges([...edges, ...normalized.edges])
+        setSubgraphs([...subgraphs, ...normalized.subgraphs])
+      } catch { /* invalid json */ }
+    }
+    reader.readAsText(file)
+    e.target.value = ''
+  }
+
+  const handleClear = () => {
+    setNodes([])
+    setEdges([])
+    setSubgraphs([])
+  }
+
   const handleLoadExample = async (key) => {
     const data = await getExample(key)
     if (data && !data.error) {
@@ -303,9 +395,26 @@ function App() {
     }
   }
 
+  const handleLibraryResize = useCallback((x) => {
+    setLibraryWidth(Math.max(150, Math.min(500, x)))
+  }, [])
+
+  const handleCodeResize = useCallback((x) => {
+    setCodeWidth(Math.max(200, Math.min(700, window.innerWidth - x)))
+  }, [])
+
+  const handleLogResize = useCallback((x) => {
+    setLogWidth(Math.max(200, Math.min(500, window.innerWidth - x)))
+  }, [])
+
   return (
     <div className="app">
-      {showLibrary && <NodeLibrary specs={nodeSpecs} onCollapse={() => setShowLibrary(false)} />}
+      {showLibrary && (
+        <>
+          <NodeLibrary specs={nodeSpecs} onCollapse={() => setShowLibrary(false)} folderPath={folderPath} onFolderChange={handleFolderChange} style={{ width: libraryWidth }} />
+          <ResizeHandle side="left" onResize={handleLibraryResize} />
+        </>
+      )}
       
       <div className="main-area">
         <div className="toolbar">
@@ -316,8 +425,11 @@ function App() {
           <div className="toolbar-group">
             <button onClick={handleSave}>Save</button>
             <button onClick={() => fileInputRef.current?.click()}>Load</button>
+            <button onClick={() => importInputRef.current?.click()}>Import</button>
+            <button onClick={handleClear} className="clear-btn">Clear</button>
             <button onClick={handleExport} className="export-btn">📤 Export</button>
             <input ref={fileInputRef} type="file" accept=".json" onChange={handleLoad} style={{ display: 'none' }} />
+            <input ref={importInputRef} type="file" accept=".json" onChange={handleImport} style={{ display: 'none' }} />
           </div>
           <div className="toolbar-group">
             <select onChange={(e) => e.target.value && handleLoadExample(e.target.value)} defaultValue="">
@@ -361,8 +473,18 @@ function App() {
         )}
       </div>
       
-      {showLog && <LogPanel messages={logMessages} onClear={() => setLogMessages([])} onCollapse={() => setShowLog(false)} onNodeClick={handleLogNodeClick} />}
-      {showCode && <CodePanel node={selectedNode} packetData={selectedPacketData} onCollapse={() => setShowCode(false)} />}
+      {showLog && (
+        <>
+          <ResizeHandle side="right" onResize={handleLogResize} />
+          <LogPanel messages={logMessages} onClear={() => setLogMessages([])} onCollapse={() => setShowLog(false)} onNodeClick={handleLogNodeClick} style={{ width: logWidth }} />
+        </>
+      )}
+      {showCode && (
+        <>
+          <ResizeHandle side="right" onResize={handleCodeResize} />
+          <CodePanel node={selectedNode} packetData={selectedPacketData} onCollapse={() => setShowCode(false)} style={{ width: codeWidth }} />
+        </>
+      )}
     </div>
   )
 }

@@ -6,11 +6,16 @@ import asyncio
 import inspect
 import json
 import traceback
-from typing import Any
+import importlib.util
+import sys
+from pathlib import Path
+from typing import Any, Optional
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+import tempfile
+import shutil
 
 from core.spec_models import NodeSpec, InputDef, OutputDef, EdgeSpec
 from core.graph_topology import build_graph, validate_graph
@@ -28,19 +33,57 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Node type registry & info cache
-node_types: dict[str, NodeSpec] = {node.name: node for node in EXAMPLE_NODES}
-NODE_INFO = []
-for name, spec in node_types.items():
-    visible_inputs = {k: {"type": v.type.__name__} for k, v in spec.inputs.items() if v.init is None}
-    code = inspect.getsource(spec.func)
-    NODE_INFO.append({
-        "name": name,
-        "category": spec.category,
-        "inputs": visible_inputs,
-        "outputs": {k: {"type": v.type.__name__} for k, v in spec.outputs.items()},
-        "code": code,
-    })
+def load_nodes_from_folder(folder_path: str) -> list[NodeSpec]:
+    """Load node specs from Python files in a folder."""
+    nodes = []
+    folder = Path(folder_path)
+    if not folder.exists():
+        return nodes
+    
+    for py_file in folder.glob("*.py"):
+        if py_file.name.startswith("_"):
+            continue
+        
+        module_name = f"dynamic_nodes_{py_file.stem}"
+        spec = importlib.util.spec_from_file_location(module_name, py_file)
+        if spec and spec.loader:
+            module = importlib.util.module_from_spec(spec)
+            sys.modules[module_name] = module
+            spec.loader.exec_module(module)
+            
+            # Look for NODES list or any NodeSpec objects
+            if hasattr(module, "NODES"):
+                nodes.extend(module.NODES)
+            else:
+                for attr_name in dir(module):
+                    attr = getattr(module, attr_name)
+                    if isinstance(attr, NodeSpec):
+                        nodes.append(attr)
+    
+    return nodes
+
+def build_node_info(specs: list[NodeSpec]) -> tuple[dict, list]:
+    """Build node type registry and info list from specs."""
+    types = {node.name: node for node in specs}
+    info = []
+    for name, spec in types.items():
+        visible_inputs = {k: {"type": v.type.__name__} for k, v in spec.inputs.items() if v.init is None}
+        code = inspect.getsource(spec.func)
+        info.append({
+            "name": name,
+            "category": spec.category,
+            "inputs": visible_inputs,
+            "outputs": {k: {"type": v.type.__name__} for k, v in spec.outputs.items()},
+            "code": code,
+        })
+    return types, info
+
+# Default node type registry & info cache
+node_types, NODE_INFO = build_node_info(EXAMPLE_NODES)
+
+# Custom uploaded nodes
+custom_nodes: list[NodeSpec] = []
+custom_temp_dir: Optional[str] = None
 
 # Current graph state
 current_graph = None
@@ -61,7 +104,57 @@ class GraphDefinition(BaseModel):
 
 @app.get("/nodes")
 async def get_nodes():
+    global node_types, NODE_INFO
+    all_nodes = EXAMPLE_NODES + custom_nodes
+    node_types, NODE_INFO = build_node_info(all_nodes)
     return NODE_INFO
+
+
+@app.post("/upload-nodes")
+async def upload_nodes(files: list[UploadFile] = File(...)):
+    global custom_nodes, custom_temp_dir, node_types, NODE_INFO
+    
+    # Clean up old temp dir
+    if custom_temp_dir and Path(custom_temp_dir).exists():
+        shutil.rmtree(custom_temp_dir)
+    
+    # Create new temp dir
+    custom_temp_dir = tempfile.mkdtemp(prefix="nodes_")
+    
+    # Save uploaded files
+    for file in files:
+        if file.filename and file.filename.endswith('.py'):
+            # Get just the filename, not the path
+            filename = Path(file.filename).name
+            if filename.startswith('_'):
+                continue
+            file_path = Path(custom_temp_dir) / filename
+            content = await file.read()
+            file_path.write_bytes(content)
+    
+    # Load nodes from temp dir
+    custom_nodes = load_nodes_from_folder(custom_temp_dir)
+    
+    # Rebuild node info
+    all_nodes = EXAMPLE_NODES + custom_nodes
+    node_types, NODE_INFO = build_node_info(all_nodes)
+    
+    return {"status": "ok", "loaded": len(custom_nodes)}
+
+
+@app.post("/clear-custom-nodes")
+async def clear_custom_nodes_endpoint():
+    global custom_nodes, custom_temp_dir, node_types, NODE_INFO
+    
+    custom_nodes = []
+    
+    if custom_temp_dir and Path(custom_temp_dir).exists():
+        shutil.rmtree(custom_temp_dir)
+        custom_temp_dir = None
+    
+    node_types, NODE_INFO = build_node_info(EXAMPLE_NODES)
+    
+    return {"status": "ok"}
 
 
 @app.post("/graph")

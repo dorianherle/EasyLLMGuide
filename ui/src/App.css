@@ -63,6 +63,42 @@ body {
   color: #f0f6fc;
 }
 
+.folder-btn {
+  background: none;
+  border: none;
+  color: #8b949e;
+  font-size: 14px;
+  cursor: pointer;
+  padding: 0 4px;
+  line-height: 1;
+}
+
+.folder-btn:hover {
+  color: #f0f6fc;
+}
+
+.clear-folder-btn {
+  background: none;
+  border: none;
+  color: #8b949e;
+  font-size: 12px;
+  cursor: pointer;
+  padding: 0 4px;
+  line-height: 1;
+}
+
+.clear-folder-btn:hover {
+  color: #f85149;
+}
+
+.current-folder-bar {
+  padding: 8px 16px;
+  background: #238636;
+  color: #fff;
+  font-size: 11px;
+  border-bottom: 1px solid #30363d;
+}
+
 .toggle-btn {
   background: #21262d !important;
   padding: 6px 10px !important;
@@ -77,11 +113,12 @@ body {
 
 .node-library {
   width: 220px;
+  min-width: 150px;
   background: #161b22;
-  border-right: 1px solid #30363d;
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  flex-shrink: 0;
 }
 
 .node-library h2 {
@@ -215,6 +252,17 @@ body {
 .toolbar .export-btn:hover {
   background: #a371f7;
   border-color: #a371f7;
+}
+
+.toolbar .clear-btn {
+  background: #da3633;
+  border-color: #da3633;
+  color: #fff;
+}
+
+.toolbar .clear-btn:hover {
+  background: #f85149;
+  border-color: #f85149;
 }
 
 .toolbar select {
@@ -729,10 +777,11 @@ body {
 /* Code Panel */
 .code-panel {
   width: 400px;
+  min-width: 200px;
   background: #161b22;
-  border-left: 1px solid #30363d;
   display: flex;
   flex-direction: column;
+  flex-shrink: 0;
 }
 
 
@@ -1077,10 +1126,11 @@ body {
 /* Log Panel */
 .log-panel {
   width: 300px;
+  min-width: 200px;
   background: #161b22;
-  border-left: 1px solid #30363d;
   display: flex;
   flex-direction: column;
+  flex-shrink: 0;
 }
 
 .log-panel .panel-header {
@@ -1170,4 +1220,32 @@ body {
 .toggle-btn.active {
   background: #238636 !important;
   border-color: #238636 !important;
+}
+
+/* Resize Handles */
+.resize-handle {
+  width: 8px;
+  background: #484f58;
+  cursor: col-resize;
+  flex-shrink: 0;
+  transition: background 0.15s;
+  z-index: 100;
+  position: relative;
+}
+
+.resize-handle:hover,
+.resize-handle.dragging {
+  background: #58a6ff;
+}
+
+.resize-handle::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 2px;
+  height: 40px;
+  background: #6e7681;
+  border-radius: 1px;
 }

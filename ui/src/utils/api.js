@@ -7,6 +7,28 @@ export async function getNodes() {
   return res.json()
 }
 
+export async function uploadNodeFiles(files) {
+  const formData = new FormData()
+  for (const file of files) {
+    if (file.name.endsWith('.py') && !file.name.startsWith('_')) {
+      formData.append('files', file, file.webkitRelativePath || file.name)
+    }
+  }
+  
+  const res = await fetch(`${API_URL}/upload-nodes`, {
+    method: 'POST',
+    body: formData
+  })
+  if (!res.ok) throw new Error('Failed to upload nodes')
+  return res.json()
+}
+
+export async function clearCustomNodes() {
+  const res = await fetch(`${API_URL}/clear-custom-nodes`, { method: 'POST' })
+  if (!res.ok) throw new Error('Failed to clear custom nodes')
+  return res.json()
+}
+
 export function expandSubgraphs(nodes, edges, subgraphs) {
   let expandedNodes = []
   let expandedEdges = [...edges]

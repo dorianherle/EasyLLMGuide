@@ -1,9 +1,9 @@
 /**
  * LogPanel - Shows logger node outputs
  */
-function LogPanel({ messages, onClear, onCollapse, onNodeClick }) {
+function LogPanel({ messages, onClear, onCollapse, onNodeClick, style }) {
   return (
-    <div className="panel log-panel">
+    <div className="panel log-panel" style={style}>
       <div className="panel-header">
         <span>📋 Log</span>
         <div>
