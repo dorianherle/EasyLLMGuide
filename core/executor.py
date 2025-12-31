@@ -201,27 +201,32 @@ class Executor:
     
     async def run(self):
         """
-        Start the executor and wait for triggers.
-        The executor keeps running until stop() is called.
+        Start the executor and keep it running for trigger inputs.
+        Triggers can fire at any time via fire_trigger().
         """
         self._init_queues()
         self._inject_inits()
         self._stopped = False
         
+        # Notify frontend about available triggers (so it can show input fields)
+        triggers = self.get_triggers()
+        for trigger_id in triggers:
+            await self._notify("trigger_available", {
+                "node_id": trigger_id, 
+                "input": "value", 
+                "type": "int"
+            })
+        
         async with anyio.create_task_group() as tg:
             self._task_group = tg
             self._schedule_ready()
             
-            triggers = self.get_triggers()
+            # Keep alive waiting for trigger inputs via websocket
             if triggers and self.input_handler:
-                for trigger_id in triggers:
-                    await self._notify("input_needed", {
-                        "node_id": trigger_id, 
-                        "input": "value", 
-                        "type": "int"
-                    })
-                    value = await self.input_handler(trigger_id)
-                    if value is not None:
+                while not self._stopped:
+                    # Wait for any trigger input
+                    trigger_id, value = await self.input_handler()
+                    if trigger_id and value is not None:
                         await self.fire_trigger(trigger_id, value)
     
     def stop(self):

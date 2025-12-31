@@ -13,11 +13,15 @@ function SubgraphNode({ id, data, selected }) {
     e.stopPropagation()
     deleteElements({ nodes: [{ id }] })
   }
+
+  // Support custom title and color like regular nodes
+  const displayTitle = data.customTitle || data.label
+  const headerStyle = data.color ? { background: data.color } : {}
   
   return (
     <div className={`custom-node subgraph-node ${selected ? 'selected' : ''}`}>
-      <div className="custom-node-header subgraph-header">
-        <span>📦 {data.label}</span>
+      <div className="custom-node-header subgraph-header" style={headerStyle}>
+        <span>📦 {displayTitle}</span>
         <button className="node-delete-btn" onClick={handleDelete} title="Delete">×</button>
       </div>
       <div className="subgraph-info">
@@ -36,31 +40,25 @@ function SubgraphNode({ id, data, selected }) {
                     type="target"
                     position={Position.Left}
                     id={input[0]}
-                    style={{
-                      background: getTypeColor(input[1].type),
-                      top: `${68 + i * 28}px`
-                    }}
+                    style={{ background: getTypeColor(input[1].type) }}
                   />
-                  <span style={{ color: getTypeColor(input[1].type) }}>●</span>
-                  <span>{input[0]}</span>
+                  <span className="port-name">{input[1].label || input[0]}</span>
+                  <span className="port-type" style={{ color: getTypeColor(input[1].type) }}>{input[1].type}</span>
                 </div>
-              ) : <div />}
+              ) : <div className="custom-node-port-empty" />}
               
               {output ? (
                 <div className="custom-node-port output">
+                  <span className="port-name">{output[1].label || output[0]}</span>
+                  <span className="port-type" style={{ color: getTypeColor(output[1].type) }}>{output[1].type}</span>
                   <Handle
                     type="source"
                     position={Position.Right}
                     id={output[0]}
-                    style={{
-                      background: getTypeColor(output[1].type),
-                      top: `${68 + i * 28}px`
-                    }}
+                    style={{ background: getTypeColor(output[1].type) }}
                   />
-                  <span style={{ color: getTypeColor(output[1].type) }}>●</span>
-                  <span>{output[0]}</span>
                 </div>
-              ) : <div />}
+              ) : <div className="custom-node-port-empty" />}
             </div>
           )
         })}
@@ -70,4 +68,3 @@ function SubgraphNode({ id, data, selected }) {
 }
 
 export default memo(SubgraphNode)
-

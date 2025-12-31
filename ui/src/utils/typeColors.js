@@ -16,3 +16,4 @@ export function getTypeClass(typeName) {
   return `type-${typeName.toLowerCase()}`
 }
 
+

@@ -51,3 +51,4 @@ Quick bloat-scan checklist (next pass)
 - Exporter prints log inline; consider aligning with logger node contract.
 - Frontend panels/styles: check App.css for unused styles, React components for dead props/handlers.
 
+

@@ -45,9 +45,8 @@ for name, spec in node_types.items():
 # Current graph state
 current_graph = None
 
-# Websocket clients and pending inputs
+# Websocket clients
 websocket_clients: list[WebSocket] = []
-pending_inputs: dict[str, asyncio.Future] = {}
 
 
 class NodeInstance(BaseModel):
@@ -117,26 +116,28 @@ async def notify_clients(event_type: str, data: dict):
             pass
 
 
-async def input_handler(node_id: str) -> Any:
-    future = asyncio.get_event_loop().create_future()
-    pending_inputs[node_id] = future
-    value = await future
-    del pending_inputs[node_id]
-    return value
+input_queue: asyncio.Queue = None
+
+async def input_handler():
+    """Wait for any trigger input from websocket, return (node_id, value)."""
+    global input_queue
+    if input_queue is None:
+        input_queue = asyncio.Queue()
+    return await input_queue.get()
 
 
 @app.post("/run")
 async def run_graph():
     """Start graph execution - returns immediately, progress via websocket."""
-    global current_graph
+    global current_graph, input_queue
     
     if current_graph is None:
         return {"error": "No graph defined"}
     
-    pending_inputs.clear()
+    # Fresh queue for this run
+    input_queue = asyncio.Queue()
     
     async def run_task():
-        # Small delay to ensure websocket is ready
         await asyncio.sleep(0.1)
         executor = Executor(current_graph, observers=[notify_clients], input_handler=input_handler)
         try:
@@ -146,7 +147,6 @@ async def run_graph():
             traceback.print_exc()
             await notify_clients("run_error", {"error": str(e)})
 
-    # Start execution in background task
     asyncio.create_task(run_task())
     
     return {"status": "started"}
@@ -188,8 +188,9 @@ async def websocket_events(websocket: WebSocket):
                         value = int(value)
                     except (ValueError, TypeError):
                         pass
-                    if node_id in pending_inputs:
-                        pending_inputs[node_id].set_result(value)
+                    # Put into queue for executor to pick up
+                    if input_queue:
+                        await input_queue.put((node_id, value))
             except json.JSONDecodeError:
                 pass
     except WebSocketDisconnect:

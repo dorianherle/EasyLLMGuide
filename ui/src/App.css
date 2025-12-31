@@ -277,17 +277,42 @@ body {
   border-color: #8957e5;
 }
 
-.subgraph-edit-bar .edit-label {
-  color: #c9d1d9;
-  font-size: 13px;
+.subgraph-edit-bar .breadcrumbs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 1;
 }
 
-.subgraph-edit-bar .edit-label strong {
+.subgraph-edit-bar .breadcrumb-item {
+  color: #8b949e;
+  font-size: 13px;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.subgraph-edit-bar .breadcrumb-item:hover {
+  color: #c9d1d9;
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.subgraph-edit-bar .breadcrumb-item.current {
   color: #a371f7;
+  font-weight: 600;
+  cursor: default;
+}
+
+.subgraph-edit-bar .breadcrumb-item.current:hover {
+  background: none;
+}
+
+.subgraph-edit-bar .breadcrumb-sep {
+  color: #484f58;
+  font-size: 12px;
 }
 
 .subgraph-edit-bar .edit-count {
-  margin-left: auto;
   color: #8b949e;
   font-size: 12px;
 }
@@ -374,6 +399,36 @@ body {
   border-color: #f85149;
   color: #fff;
 }
+
+/* Data packets on edges */
+.edge-packet {
+  cursor: pointer;
+}
+
+.packet-dot {
+  width: 18px;
+  height: 18px;
+  background: linear-gradient(135deg, #58a6ff 0%, #1f6feb 100%);
+  border: 2px solid #0d1117;
+  border-radius: 50%;
+  box-shadow: 0 0 8px rgba(88, 166, 255, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: packet-pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes packet-pulse {
+  0%, 100% { box-shadow: 0 0 8px rgba(88, 166, 255, 0.6); }
+  50% { box-shadow: 0 0 16px rgba(88, 166, 255, 0.9); }
+}
+
+.packet-count {
+  font-size: 10px;
+  font-weight: 700;
+  color: #fff;
+}
+
 
 .custom-node-body {
   padding: 6px 0;
@@ -512,6 +567,12 @@ body {
   color: #8b949e;
 }
 
+.run-panel-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
 .panel-close {
   background: none;
   border: none;
@@ -591,6 +652,54 @@ body {
   font-size: 14px;
   text-align: center;
   padding: 8px;
+}
+
+.run-triggers {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.run-trigger-row {
+  display: flex;
+  gap: 8px;
+}
+
+.run-trigger-row input {
+  flex: 1;
+  background: #0d1117;
+  border: 1px solid #30363d;
+  border-radius: 6px;
+  padding: 8px 12px;
+  color: #f0f6fc;
+  font-size: 14px;
+  font-family: 'JetBrains Mono', monospace;
+}
+
+.run-trigger-row input:focus {
+  outline: none;
+  border-color: #58a6ff;
+}
+
+.run-trigger-row button {
+  background: #238636;
+  border: none;
+  color: #fff;
+  padding: 8px 14px;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.run-trigger-row button:hover {
+  background: #2ea043;
+}
+
+.run-trigger-row button:disabled {
+  background: #21262d;
+  color: #484f58;
+  cursor: not-allowed;
 }
 
 .run-outputs {
@@ -849,6 +958,111 @@ body {
   background: #21262d;
   color: #484f58;
   cursor: not-allowed;
+}
+
+/* Properties Dialog */
+.properties-dialog {
+  min-width: 340px;
+}
+
+.prop-section {
+  margin-bottom: 16px;
+}
+
+.prop-section > label {
+  display: block;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: #8b949e;
+  margin-bottom: 8px;
+}
+
+.prop-section > input {
+  width: 100%;
+  margin-bottom: 0;
+}
+
+.color-options {
+  display: flex;
+  gap: 8px;
+}
+
+.color-option {
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  border: 2px solid #30363d;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.color-option:hover {
+  border-color: #58a6ff;
+  transform: scale(1.1);
+}
+
+.color-option.selected {
+  border-color: #f0f6fc;
+  box-shadow: 0 0 0 2px rgba(88, 166, 255, 0.4);
+}
+
+.port-group {
+  margin-bottom: 12px;
+  padding: 8px;
+  background: #0d1117;
+  border-radius: 6px;
+  border: 1px solid #21262d;
+}
+
+.port-group:last-child {
+  margin-bottom: 0;
+}
+
+.port-group-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid #30363d;
+}
+
+.port-group-type {
+  font-size: 12px;
+  font-weight: 600;
+  color: #58a6ff;
+  text-transform: uppercase;
+}
+
+.port-group-id {
+  font-size: 10px;
+  color: #484f58;
+  font-family: 'JetBrains Mono', monospace;
+}
+
+.port-label-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.port-label-row:last-child {
+  margin-bottom: 0;
+}
+
+.port-label-row .port-original {
+  font-size: 11px;
+  color: #8b949e;
+  width: 80px;
+  flex-shrink: 0;
+  font-family: 'JetBrains Mono', monospace;
+}
+
+.port-label-row input {
+  flex: 1;
+  margin-bottom: 0;
 }
 
 /* Type Colors */

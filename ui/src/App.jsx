@@ -1,10 +1,83 @@
-import { useState, useCallback, useEffect, useRef } from 'react'
+import { useState, useCallback, useEffect, useRef, useMemo } from 'react'
 import FlowEditor from './components/FlowEditor'
 import NodeLibrary from './components/NodeLibrary'
 import CodePanel from './components/CodePanel'
 import LogPanel from './components/LogPanel'
 import RunPanel from './components/RunPanel'
 import { getNodes, saveGraph, runGraph, connectWebSocket, sendInputResponse, getExamples, getExample, exportGraph } from './utils/api'
+
+// Normalize all IDs in a graph to clean sequential format
+function normalizeGraph(nodes, edges, subgraphs = []) {
+  const idMap = {}  // oldId -> newId
+  const typeCounts = {}
+  
+  // First pass: build ID mapping for nodes
+  const newNodes = nodes.map(node => {
+    const nodeType = node.type === 'subgraph' ? 'subgraph' : node.data.label
+    typeCounts[nodeType] = (typeCounts[nodeType] || 0) + 1
+    const newId = `${nodeType}_${typeCounts[nodeType]}`
+    idMap[node.id] = newId
+    return { ...node, id: newId }
+  })
+  
+  // Second pass: update edge references
+  const newEdges = edges.map(edge => ({
+    ...edge,
+    id: `e_${edges.indexOf(edge) + 1}`,
+    source: idMap[edge.source] || edge.source,
+    target: idMap[edge.target] || edge.target
+  }))
+  
+  // Third pass: update subgraph references and their internal nodes/edges
+  const newSubgraphs = subgraphs.map(sg => {
+    const newSgId = idMap[sg.id] || sg.id
+    
+    // Normalize internal nodes
+    const internalIdMap = {}
+    const internalCounts = {}
+    const newSgNodes = sg.nodes.map(node => {
+      const nodeType = node.type === 'subgraph' ? 'subgraph' : node.data.label
+      internalCounts[nodeType] = (internalCounts[nodeType] || 0) + 1
+      const newId = `${nodeType}_${internalCounts[nodeType]}`
+      internalIdMap[node.id] = newId
+      return { ...node, id: newId }
+    })
+    
+    // Update internal edges
+    const newSgEdges = (sg.edges || []).map((edge, i) => ({
+      ...edge,
+      id: `e_${i + 1}`,
+      source: internalIdMap[edge.source] || edge.source,
+      target: internalIdMap[edge.target] || edge.target
+    }))
+    
+    // Update port keys in parent node (they reference internal node IDs)
+    const parentNode = newNodes.find(n => n.id === newSgId)
+    if (parentNode) {
+      const updatePortKeys = (ports) => {
+        const newPorts = {}
+        Object.entries(ports || {}).forEach(([key, val]) => {
+          const lastUnderscore = key.lastIndexOf('_')
+          if (lastUnderscore > 0) {
+            const oldNodeId = key.substring(0, lastUnderscore)
+            const portName = key.substring(lastUnderscore + 1)
+            const newNodeId = internalIdMap[oldNodeId] || oldNodeId
+            newPorts[`${newNodeId}_${portName}`] = val
+          } else {
+            newPorts[key] = val
+          }
+        })
+        return newPorts
+      }
+      parentNode.data.inputs = updatePortKeys(parentNode.data.inputs)
+      parentNode.data.outputs = updatePortKeys(parentNode.data.outputs)
+    }
+    
+    return { ...sg, id: newSgId, name: sg.name, nodes: newSgNodes, edges: newSgEdges }
+  })
+  
+  return { nodes: newNodes, edges: newEdges, subgraphs: newSubgraphs }
+}
 
 function App() {
   const [selectedNode, setSelectedNode] = useState(null)
@@ -23,8 +96,10 @@ function App() {
   
   // Run panel state
   const [showRunPanel, setShowRunPanel] = useState(false)
-  const [pendingInputs, setPendingInputs] = useState([])  // Array of { nodeId, inputName, type }
-  const [terminalOutputs, setTerminalOutputs] = useState([])
+  const [availableTriggers, setAvailableTriggers] = useState([])
+  const [edgePackets, setEdgePackets] = useState({})  // { edgeId: [values] }
+  const [terminalOutputs, setTerminalOutputs] = useState([])  // final outputs from terminal_output nodes
+  const [selectedPacketData, setSelectedPacketData] = useState(null)  // packet data to show in code panel
   const [runError, setRunError] = useState(null)
   
   const fileInputRef = useRef(null)
@@ -37,12 +112,14 @@ function App() {
     getExamples().then(setExamplesList).catch(() => {})
   }, [])
 
+  // Need access to current edges in websocket handler
+  const edgesRef = useRef(edges)
+  useEffect(() => { edgesRef.current = edges }, [edges])
+
   useEffect(() => {
     const ws = connectWebSocket((msg) => {
-      if (msg.type === 'input_needed') {
-        // Collect all input requests (they may come in rapid succession)
-        setPendingInputs(prev => {
-          // Avoid duplicates
+      if (msg.type === 'trigger_available') {
+        setAvailableTriggers(prev => {
           if (prev.some(p => p.nodeId === msg.data?.node_id)) return prev
           return [...prev, {
             nodeId: msg.data?.node_id,
@@ -50,6 +127,36 @@ function App() {
             type: msg.data?.type || 'int'
           }]
         })
+      } else if (msg.type === 'node_start') {
+        setHighlightedNode(msg.data?.node_id)
+        // Remove packets from edges going INTO this node (data consumed)
+        const nodeId = msg.data?.node_id
+        setEdgePackets(prev => {
+          const next = { ...prev }
+          edgesRef.current.forEach(e => {
+            if (e.target === nodeId && next[e.id]?.length > 0) {
+              next[e.id] = next[e.id].slice(1)  // Remove first packet (consumed)
+              if (next[e.id].length === 0) delete next[e.id]
+            }
+          })
+          return next
+        })
+      } else if (msg.type === 'node_output') {
+        // Add packet to edges FROM this node's output branch
+        const sourceNode = msg.data?.node_id
+        const branch = msg.data?.branch
+        const value = msg.data?.value
+        setEdgePackets(prev => {
+          const next = { ...prev }
+          edgesRef.current.forEach(e => {
+            if (e.source === sourceNode && e.sourceHandle === branch) {
+              next[e.id] = [...(next[e.id] || []), value]
+            }
+          })
+          return next
+        })
+      } else if (msg.type === 'node_done') {
+        setHighlightedNode(null)
       } else if (msg.type === 'terminal_output') {
         setTerminalOutputs(prev => [...prev, msg.data?.value])
       } else if (msg.type === 'log') {
@@ -58,15 +165,18 @@ function App() {
       } else if (msg.type === 'node_error') {
         setRunError(`${msg.data?.node_id}: ${msg.data?.error}`)
         setIsRunning(false)
-        setPendingInputs([])
+        setHighlightedNode(null)
       } else if (msg.type === 'run_complete') {
         setIsRunning(false)
-        setPendingInputs([])
+        setAvailableTriggers([])
         setHighlightedNode(null)
+        setEdgePackets({})
       } else if (msg.type === 'run_error') {
         setRunError(msg.data?.error)
         setIsRunning(false)
-        setPendingInputs([])
+        setAvailableTriggers([])
+        setHighlightedNode(null)
+        setEdgePackets({})
       }
     })
     return () => ws.close()
@@ -76,9 +186,16 @@ function App() {
     const spec = nodeSpecs.find(s => s.name === node.data.label)
     if (spec) {
       setSelectedNode(spec)
+      setSelectedPacketData(null)  // Clear packet selection when selecting node
       if (!showCode) setShowCode(true)
     }
   }, [nodeSpecs, showCode])
+
+  const handlePacketClick = useCallback((packets) => {
+    setSelectedPacketData(packets)
+    setSelectedNode(null)  // Clear node selection when selecting packet
+    if (!showCode) setShowCode(true)
+  }, [showCode])
 
   const handleLogNodeClick = useCallback((nodeId) => {
     setHighlightedNode(nodeId)
@@ -92,9 +209,10 @@ function App() {
     }
     
     setRunError(null)
+    setEdgePackets({})
     setTerminalOutputs([])
     setLogMessages([])
-    setPendingInputs([])
+    setAvailableTriggers([])
     setShowRunPanel(true)
     setIsRunning(true)
     
@@ -115,13 +233,8 @@ function App() {
     // Don't set isRunning=false here - wait for run_complete via websocket
   }
 
-  const handleSubmitInputs = (values) => {
-    // values is { nodeId: value, ... }
-    Object.entries(values).forEach(([nodeId, value]) => {
-      sendInputResponse(nodeId, value)
-    })
-    setPendingInputs([])
-    setHighlightedNode(null)
+  const handleSubmitInput = (nodeId, value) => {
+    sendInputResponse(nodeId, value)
   }
 
   const handleSave = () => {
@@ -142,9 +255,10 @@ function App() {
     reader.onload = (event) => {
       try {
         const data = JSON.parse(event.target.result)
-        setNodes(data.nodes || [])
-        setEdges(data.edges || [])
-        setSubgraphs(data.subgraphs || [])
+        const normalized = normalizeGraph(data.nodes || [], data.edges || [], data.subgraphs || [])
+        setNodes(normalized.nodes)
+        setEdges(normalized.edges)
+        setSubgraphs(normalized.subgraphs)
       } catch { /* invalid json */ }
     }
     reader.readAsText(file)
@@ -154,14 +268,16 @@ function App() {
   const handleLoadExample = async (key) => {
     const data = await getExample(key)
     if (data && !data.error) {
-      setNodes(data.nodes)
-      setEdges(data.edges)
+      const normalized = normalizeGraph(data.nodes || [], data.edges || [], [])
+      setNodes(normalized.nodes)
+      setEdges(normalized.edges)
     }
   }
 
   const handleCloseRunPanel = () => {
     setShowRunPanel(false)
-    setPendingInputs([])
+    setAvailableTriggers([])
+    setEdgePackets({})
     setTerminalOutputs([])
     setRunError(null)
   }
@@ -194,8 +310,8 @@ function App() {
       <div className="main-area">
         <div className="toolbar">
           {!showLibrary && <button onClick={() => setShowLibrary(true)} className="toggle-btn">☰</button>}
-          <button onClick={handleRunClick} disabled={isRunning && pendingInputs.length === 0} className="run-btn">
-            {isRunning && pendingInputs.length === 0 ? '⏳' : '▶'} Run
+          <button onClick={handleRunClick} disabled={isRunning} className="run-btn">
+            {isRunning ? '⏳' : '▶'} Run
           </button>
           <div className="toolbar-group">
             <button onClick={handleSave}>Save</button>
@@ -228,22 +344,25 @@ function App() {
             subgraphs={subgraphs}
             setSubgraphs={setSubgraphs}
             highlightedNode={highlightedNode}
+            edgePackets={edgePackets}
+            onPacketClick={handlePacketClick}
           />
         </div>
         
         {showRunPanel && (
           <RunPanel
-            pendingInputs={pendingInputs}
+            triggers={availableTriggers}
             outputs={terminalOutputs}
-            onSubmitInputs={handleSubmitInputs}
+            onSubmitInput={handleSubmitInput}
             onClose={handleCloseRunPanel}
+            onClear={() => setTerminalOutputs([])}
             isRunning={isRunning}
           />
         )}
       </div>
       
       {showLog && <LogPanel messages={logMessages} onClear={() => setLogMessages([])} onCollapse={() => setShowLog(false)} onNodeClick={handleLogNodeClick} />}
-      {showCode && <CodePanel node={selectedNode} onCollapse={() => setShowCode(false)} />}
+      {showCode && <CodePanel node={selectedNode} packetData={selectedPacketData} onCollapse={() => setShowCode(false)} />}
     </div>
   )
 }

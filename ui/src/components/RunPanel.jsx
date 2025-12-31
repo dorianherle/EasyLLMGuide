@@ -1,85 +1,57 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useRef, useEffect } from 'react'
 
 function RunPanel({ 
-  pendingInputs,  // Array of { nodeId, inputName, type }
-  outputs, 
-  onSubmitInputs,
+  triggers,
+  outputs,
+  onSubmitInput,
   onClose,
+  onClear,
   isRunning 
 }) {
   const [inputValues, setInputValues] = useState({})
   const firstInputRef = useRef(null)
+  const outputsEndRef = useRef(null)
 
-  // Reset values when new inputs needed
+  // Focus first input when triggers appear
   useEffect(() => {
-    if (pendingInputs.length > 0) {
-      const init = {}
-      pendingInputs.forEach(inp => {
-        init[inp.nodeId] = ''
-      })
-      setInputValues(init)
+    if (triggers.length > 0) {
       setTimeout(() => firstInputRef.current?.focus(), 50)
     }
-  }, [pendingInputs])
+  }, [triggers])
 
-  const handleSubmit = (e) => {
-    e.preventDefault()
-    const converted = {}
-    pendingInputs.forEach(inp => {
-      const val = inputValues[inp.nodeId]
-      converted[inp.nodeId] = inp.type === 'int' ? parseInt(val) || 0 : val
-    })
-    onSubmitInputs(converted)
-    setInputValues({})
+  // Scroll to bottom when new outputs arrive
+  useEffect(() => {
+    outputsEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [outputs])
+
+  const handleSubmit = (nodeId, type) => {
+    const val = inputValues[nodeId] || ''
+    if (val.toString().trim() === '') return
+    
+    const converted = type === 'int' ? parseInt(val) || 0 : val
+    onSubmitInput(nodeId, converted)
+    setInputValues(prev => ({ ...prev, [nodeId]: '' }))
   }
 
-  const allFilled = pendingInputs.every(inp => 
-    inputValues[inp.nodeId]?.toString().trim() !== ''
-  )
-
-  const showInputForm = pendingInputs.length > 0
-  const showRunning = isRunning && pendingInputs.length === 0 && outputs.length === 0
-  const showOutputs = outputs.length > 0
+  const handleKeyDown = (e, nodeId, type) => {
+    if (e.key === 'Enter') {
+      handleSubmit(nodeId, type)
+    }
+  }
 
   return (
     <div className="run-panel">
       <div className="run-panel-header">
         <span>Terminal</span>
-        <button onClick={onClose} className="panel-close">×</button>
+        <div className="run-panel-actions">
+          {outputs.length > 0 && <button onClick={onClear} className="panel-btn" title="Clear">⌫</button>}
+          <button onClick={onClose} className="panel-close">×</button>
+        </div>
       </div>
       
       <div className="run-panel-content">
-        {/* Input prompts */}
-        {showInputForm && (
-          <form onSubmit={handleSubmit} className="run-inputs">
-            {pendingInputs.map((inp, i) => (
-              <div key={inp.nodeId} className="run-input-row">
-                <label>{inp.inputName} ({inp.type})</label>
-                <input
-                  ref={i === 0 ? firstInputRef : null}
-                  type={inp.type === 'int' ? 'number' : 'text'}
-                  value={inputValues[inp.nodeId] || ''}
-                  onChange={(e) => setInputValues(prev => ({
-                    ...prev,
-                    [inp.nodeId]: e.target.value
-                  }))}
-                  placeholder={`Enter ${inp.type}`}
-                />
-              </div>
-            ))}
-            <button type="submit" disabled={!allFilled} className="run-submit">
-              {pendingInputs.length > 1 ? 'Submit All →' : 'Submit →'}
-            </button>
-          </form>
-        )}
-
-        {/* Running indicator */}
-        {showRunning && (
-          <div className="run-status">Running...</div>
-        )}
-
-        {/* Output section */}
-        {showOutputs && (
+        {/* Outputs */}
+        {outputs.length > 0 && (
           <div className="run-outputs">
             {outputs.map((out, i) => (
               <div key={i} className="run-output-line">
@@ -87,7 +59,41 @@ function RunPanel({
                 <span className="output-value">{out}</span>
               </div>
             ))}
+            <div ref={outputsEndRef} />
           </div>
+        )}
+
+        {/* Trigger inputs */}
+        {triggers.length > 0 ? (
+          <div className="run-triggers">
+            {triggers.map((trig, i) => (
+              <div key={trig.nodeId} className="run-trigger-row">
+                <input
+                  ref={i === 0 ? firstInputRef : null}
+                  type={trig.type === 'int' ? 'number' : 'text'}
+                  value={inputValues[trig.nodeId] || ''}
+                  onChange={(e) => setInputValues(prev => ({
+                    ...prev,
+                    [trig.nodeId]: e.target.value
+                  }))}
+                  onKeyDown={(e) => handleKeyDown(e, trig.nodeId, trig.type)}
+                  placeholder={`Enter ${trig.type}...`}
+                />
+                <button 
+                  onClick={() => handleSubmit(trig.nodeId, trig.type)}
+                  disabled={!inputValues[trig.nodeId]?.toString().trim()}
+                >
+                  →
+                </button>
+              </div>
+            ))}
+          </div>
+        ) : (
+          outputs.length === 0 && (
+            <div className="run-status">
+              {isRunning ? 'Starting...' : 'Waiting...'}
+            </div>
+          )
         )}
       </div>
     </div>
