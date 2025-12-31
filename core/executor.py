@@ -16,12 +16,7 @@ import anyio
 import networkx as nx
 
 from core.graph_topology import get_downstream
-from core.spec_models import NodeSpec
-
-
-TRIGGER_NODES = ['terminal_input', 'trigger']
-OUTPUT_NODES = ['terminal_output']
-LOGGER_NODES = ['logger']
+from core.spec_models import NodeSpec, TRIGGER_TYPES, OUTPUT_TYPES, LOGGER_TYPES
 
 
 class Executor:
@@ -47,7 +42,7 @@ class Executor:
         for node_id in self.graph.nodes:
             spec: NodeSpec = self.graph.nodes[node_id]["spec"]
             node_type = self._get_node_type(node_id)
-            if node_type in TRIGGER_NODES:
+            if node_type in TRIGGER_TYPES:
                 continue
             for input_name, input_def in spec.inputs.items():
                 if input_def.init is not None:
@@ -59,7 +54,7 @@ class Executor:
     
     def _is_trigger(self, node_id: str) -> bool:
         """Check if node is a trigger (entry point)."""
-        return self._get_node_type(node_id) in TRIGGER_NODES
+        return self._get_node_type(node_id) in TRIGGER_TYPES
     
     def _has_incoming_edge(self, node_id: str, input_name: str) -> bool:
         """Check if an input has an incoming edge (is connected)."""
@@ -150,10 +145,10 @@ class Executor:
     
     async def _handle_output(self, node_id: str, node_type: str, branch: str, value: Any):
         """Handle node output - notify and route downstream."""
-        if node_type in OUTPUT_NODES:
+        if node_type in OUTPUT_TYPES:
             await self._notify("terminal_output", {"node_id": node_id, "value": value})
         
-        if node_type in LOGGER_NODES:
+        if node_type in LOGGER_TYPES:
             await self._notify("log", {"node_id": node_id, "value": value})
         
         await self._notify("node_output", {"node_id": node_id, "branch": branch, "value": value})

@@ -36,3 +36,9 @@ class EdgeSpec(BaseModel):
     target_node: str
     target_input: str
 
+
+# Canonical type constants (single source of truth)
+TRIGGER_TYPES = {'terminal_input', 'trigger'}
+OUTPUT_TYPES = {'terminal_output'}
+LOGGER_TYPES = {'logger'}
+

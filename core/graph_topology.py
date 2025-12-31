@@ -1,6 +1,6 @@
 from typing import Any
 import networkx as nx
-from core.spec_models import NodeSpec, EdgeSpec
+from core.spec_models import NodeSpec, EdgeSpec, TRIGGER_TYPES
 
 
 def build_graph(nodes: list[NodeSpec], edges: list[EdgeSpec]) -> nx.MultiDiGraph:
@@ -18,9 +18,6 @@ def build_graph(nodes: list[NodeSpec], edges: list[EdgeSpec]) -> nx.MultiDiGraph
         )
     
     return g
-
-
-TRIGGER_TYPES = {'terminal_input', 'trigger'}
 
 
 def validate_graph(g: nx.MultiDiGraph, entry_bindings: dict[tuple[str, str], any] = None) -> list[str]:
@@ -69,12 +66,6 @@ def validate_graph(g: nx.MultiDiGraph, entry_bindings: dict[tuple[str, str], any
             has_entry = (node_id, input_name) in entry_bindings
             has_init = input_def.init is not None
             has_default = input_def.default is not None
-            
-            # Multiple connections are OK in dataflow model (values are queued)
-            # But we still warn since it might be unintentional
-            # Uncomment if you want to allow without warning:
-            # if edge_count > 1:
-            #     errors.append(f"Node '{node_id}' input '{input_name}' has multiple connections ({edge_count})")
             
             if edge_count == 0 and not (has_entry or has_init or has_default):
                 errors.append(f"Node '{node_id}' input '{input_name}' has no source")

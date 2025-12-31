@@ -8,11 +8,8 @@ The exported code uses an IO adapter pattern where:
 """
 
 import networkx as nx
-from typing import Any
 
-
-TRIGGER_TYPES = ("terminal_input", "trigger")
-OUTPUT_TYPES = ("terminal_output",)
+from core.spec_models import TRIGGER_TYPES, OUTPUT_TYPES
 
 
 def export_graph(instances: list[dict], edges: list[dict], node_types: dict) -> str:
