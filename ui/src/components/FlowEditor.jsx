@@ -293,10 +293,17 @@ function FlowEditor({ nodes, setNodes, edges, setEdges, onNodeSelect, subgraphs,
 
     selectedNodeData.forEach(node => {
       if (node.type === 'custom') {
+        // Expose unconnected inputs
         Object.entries(node.data.inputs || {}).forEach(([inputName, inputDef]) => {
           const hasSource = internalEdges.some(e => e.target === node.id && e.targetHandle === inputName)
           const key = `${node.id}_${inputName}`
           if (!hasSource && !externalInputs[key]) externalInputs[key] = { type: inputDef.type }
+        })
+        // Expose unconnected outputs (outputs not consumed internally)
+        Object.entries(node.data.outputs || {}).forEach(([outputName, outputDef]) => {
+          const hasConsumer = internalEdges.some(e => e.source === node.id && e.sourceHandle === outputName)
+          const key = `${node.id}_${outputName}`
+          if (!hasConsumer && !externalOutputs[key]) externalOutputs[key] = { type: outputDef.type }
         })
       }
     })
