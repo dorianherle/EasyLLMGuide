@@ -6,7 +6,8 @@ import {
   useNodesState,
   useEdgesState,
   addEdge,
-  useViewport
+  useViewport,
+  useReactFlow
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import CustomNode from './CustomNode'
@@ -24,7 +25,6 @@ const shortId = () => Math.random().toString(36).substring(2, 6)
 
 // Ghost edges component - shows faded connections to outside world
 function GhostEdges({ nodes, inputs, outputs }) {
-  // Get viewport transform from React Flow (reactive)
   const { x: vpX, y: vpY, zoom } = useViewport()
   
   // Build paths for ghost edges
@@ -33,15 +33,41 @@ function GhostEdges({ nodes, inputs, outputs }) {
     
     // Helper to get node port position
     const getPortPos = (nodeId, portName, isInput) => {
-      const node = nodes.find(n => n.id === nodeId)
+      let node = nodes.find(n => n.id === nodeId)
+      let actualPortName = portName
+      
+      // If node not found directly, check if it's inside a subgraph
+      if (!node) {
+        const handle = `${nodeId}_${portName}`
+        // Look for a subgraph that exposes this port
+        node = nodes.find(n => 
+          n.type === 'subgraph' && 
+          (isInput ? n.data?.inputs?.[handle] : n.data?.outputs?.[handle])
+        )
+        if (node) {
+          actualPortName = handle
+        }
+      }
+      
       if (!node) return null
       
-      const nodeWidth = 180
-      const portOffset = 40
+      // Use actual measured width from React Flow, fallback to min-width
+      const nodeWidth = node.measured?.width || node.width || 180
+      const headerHeight = node.type === 'subgraph' ? 58 : 38 // subgraph has info row
+      const bodyPadding = 6
+      const rowHeight = 28
+      
+      // Find port index
+      const ports = isInput ? Object.keys(node.data?.inputs || {}) : Object.keys(node.data?.outputs || {})
+      const portIndex = ports.indexOf(actualPortName)
+      if (portIndex === -1) return null
+      
+      const portY = headerHeight + bodyPadding + rowHeight * portIndex + rowHeight / 2
+      const strokeOffset = 1 // half of stroke width (2px)
       
       return {
         x: node.position.x + (isInput ? 0 : nodeWidth),
-        y: node.position.y + portOffset
+        y: node.position.y + portY + strokeOffset
       }
     }
     
@@ -58,7 +84,10 @@ function GhostEdges({ nodes, inputs, outputs }) {
       result.push({
         id: `ghost-in-${i}`,
         type: 'input',
-        d: `M ${startX} ${startY} C ${startX + 50} ${startY}, ${endX - 50} ${endY}, ${endX} ${endY}`
+        d: `M ${startX} ${startY} C ${startX + 50} ${startY}, ${endX - 50} ${endY}, ${endX} ${endY}`,
+        label: inp.fromLabel,
+        labelX: startX,
+        labelY: startY - 8
       })
     })
     
@@ -75,7 +104,10 @@ function GhostEdges({ nodes, inputs, outputs }) {
       result.push({
         id: `ghost-out-${i}`,
         type: 'output',
-        d: `M ${startX} ${startY} C ${startX + 50} ${startY}, ${endX - 50} ${endY}, ${endX} ${endY}`
+        d: `M ${startX} ${startY} C ${startX + 50} ${startY}, ${endX - 50} ${endY}, ${endX} ${endY}`,
+        label: out.toLabel,
+        labelX: endX,
+        labelY: endY - 8
       })
     })
     
@@ -84,26 +116,31 @@ function GhostEdges({ nodes, inputs, outputs }) {
   
   return (
     <svg className="ghost-edges-layer" style={{ overflow: 'visible' }}>
-      <defs>
-        <linearGradient id="ghost-fade-left" x1="0%" y1="0%" x2="100%" y2="0%">
-          <stop offset="0%" stopColor="#8957e5" stopOpacity="0" />
-          <stop offset="100%" stopColor="#8957e5" stopOpacity="0.5" />
-        </linearGradient>
-        <linearGradient id="ghost-fade-right" x1="0%" y1="0%" x2="100%" y2="0%">
-          <stop offset="0%" stopColor="#8957e5" stopOpacity="0.5" />
-          <stop offset="100%" stopColor="#8957e5" stopOpacity="0" />
-        </linearGradient>
-      </defs>
       <g transform={`translate(${vpX}, ${vpY}) scale(${zoom})`}>
         {paths.map(p => (
-          <path
-            key={p.id}
-            d={p.d}
-            fill="none"
-            stroke={`url(#ghost-fade-${p.type === 'input' ? 'left' : 'right'})`}
-            strokeWidth={2 / zoom}
-            strokeDasharray={`${6 / zoom} ${4 / zoom}`}
-          />
+          <g key={p.id}>
+            <path
+              d={p.d}
+              fill="none"
+              stroke="#8957e5"
+              strokeWidth={2}
+              strokeOpacity={0.6}
+              strokeDasharray="8 4"
+            />
+            {p.label && (
+              <text
+                x={p.labelX}
+                y={p.labelY}
+                fill="#8957e5"
+                fontSize={11}
+                fontFamily="JetBrains Mono, monospace"
+                textAnchor={p.type === 'input' ? 'start' : 'end'}
+                opacity={0.8}
+              >
+                {p.label}
+              </text>
+            )}
+          </g>
         ))}
       </g>
     </svg>
@@ -145,44 +182,121 @@ function FlowEditor({ nodes, setNodes, edges, setEdges, onNodeSelect, subgraphs,
   }, [editPath, subgraphs])
 
   // Get external connections for current subgraph (for ghost edges)
+  // Traces connections up through nested subgraphs to find ultimate source/target
   const externalConnections = useMemo(() => {
     if (editPath.length === 0) return { inputs: [], outputs: [] }
     
+    // Helper to get context (nodes/edges) at a given level
+    const getContext = (level) => {
+      if (level < 0) return { nodes, edges }
+      const sg = subgraphs.find(s => s.id === editPath[level])
+      return { nodes: sg?.nodes || [], edges: sg?.edges || [] }
+    }
+    
+    // Trace an input connection up through hierarchy to find real source
+    const traceInputSource = (subgraphId, handle, level) => {
+      const parentCtx = getContext(level - 1)
+      
+      // Find edge targeting this subgraph with this handle
+      const edge = parentCtx.edges.find(e => 
+        e.target === subgraphId && e.targetHandle === handle
+      )
+      
+      if (edge) {
+        const sourceNode = parentCtx.nodes.find(n => n.id === edge.source)
+        if (sourceNode?.type === 'subgraph' && edge.sourceHandle) {
+          // Source is a subgraph - trace through it (but this gets complex, just use name)
+          return edge.source
+        }
+        return edge.source
+      }
+      
+      // No edge at this level - check if handle passes through to parent subgraph
+      if (level > 0) {
+        const parentSubgraphId = editPath[level - 1]
+        const grandparentCtx = getContext(level - 2)
+        const parentNode = grandparentCtx.nodes.find(n => n.id === parentSubgraphId)
+        
+        // If parent subgraph exposes this same handle, trace up
+        if (parentNode?.data?.inputs?.[handle]) {
+          return traceInputSource(parentSubgraphId, handle, level - 1)
+        }
+      }
+      
+      return null
+    }
+    
+    // Trace an output connection up through hierarchy to find real target
+    const traceOutputTarget = (subgraphId, handle, level) => {
+      const parentCtx = getContext(level - 1)
+      
+      // Find edge from this subgraph with this handle
+      const edge = parentCtx.edges.find(e => 
+        e.source === subgraphId && e.sourceHandle === handle
+      )
+      
+      if (edge) {
+        const targetNode = parentCtx.nodes.find(n => n.id === edge.target)
+        if (targetNode?.type === 'subgraph' && edge.targetHandle) {
+          return edge.target
+        }
+        return edge.target
+      }
+      
+      // No edge at this level - check if handle passes through to parent subgraph
+      if (level > 0) {
+        const parentSubgraphId = editPath[level - 1]
+        const grandparentCtx = getContext(level - 2)
+        const parentNode = grandparentCtx.nodes.find(n => n.id === parentSubgraphId)
+        
+        if (parentNode?.data?.outputs?.[handle]) {
+          return traceOutputTarget(parentSubgraphId, handle, level - 1)
+        }
+      }
+      
+      return null
+    }
+    
     const currentSubgraphId = editPath[editPath.length - 1]
-    // Find parent context edges that connect to/from this subgraph
-    const parentEdges = editPath.length === 1 ? edges : 
-      (subgraphs.find(s => s.id === editPath[editPath.length - 2])?.edges || [])
+    const currentLevel = editPath.length - 1
+    const parentCtx = getContext(currentLevel - 1)
+    const currentNode = parentCtx.nodes.find(n => n.id === currentSubgraphId)
     
-    const inputs = []  // { nodeId, portName, fromLabel }
-    const outputs = [] // { nodeId, portName, toLabel }
+    const inputs = []
+    const outputs = []
     
-    parentEdges.forEach(e => {
-      // Incoming to subgraph
-      if (e.target === currentSubgraphId && e.targetHandle) {
-        const lastUnderscore = e.targetHandle.lastIndexOf('_')
+    // For each exposed input, trace to find source
+    Object.keys(currentNode?.data?.inputs || {}).forEach(handle => {
+      const source = traceInputSource(currentSubgraphId, handle, currentLevel)
+      if (source) {
+        const lastUnderscore = handle.lastIndexOf('_')
         if (lastUnderscore > 0) {
           inputs.push({
-            nodeId: e.targetHandle.substring(0, lastUnderscore),
-            portName: e.targetHandle.substring(lastUnderscore + 1),
-            fromLabel: e.source
+            nodeId: handle.substring(0, lastUnderscore),
+            portName: handle.substring(lastUnderscore + 1),
+            fromLabel: source
           })
         }
       }
-      // Outgoing from subgraph
-      if (e.source === currentSubgraphId && e.sourceHandle) {
-        const lastUnderscore = e.sourceHandle.lastIndexOf('_')
+    })
+    
+    // For each exposed output, trace to find target
+    Object.keys(currentNode?.data?.outputs || {}).forEach(handle => {
+      const target = traceOutputTarget(currentSubgraphId, handle, currentLevel)
+      if (target) {
+        const lastUnderscore = handle.lastIndexOf('_')
         if (lastUnderscore > 0) {
           outputs.push({
-            nodeId: e.sourceHandle.substring(0, lastUnderscore),
-            portName: e.sourceHandle.substring(lastUnderscore + 1),
-            toLabel: e.target
+            nodeId: handle.substring(0, lastUnderscore),
+            portName: handle.substring(lastUnderscore + 1),
+            toLabel: target
           })
         }
       }
     })
     
     return { inputs, outputs }
-  }, [editPath, edges, subgraphs])
+  }, [editPath, nodes, edges, subgraphs])
 
   // Update nodes/edges in current context
   const updateCurrentContext = useCallback((newNodes, newEdges) => {
@@ -407,6 +521,7 @@ function FlowEditor({ nodes, setNodes, edges, setEdges, onNodeSelect, subgraphs,
     const externalInputs = {}
     const externalOutputs = {}
     
+    // Check edges in current context
     currentContext.edges.forEach(e => {
       if (selectedIds.has(e.target) && !selectedIds.has(e.source)) {
         const key = `${e.target}_${e.targetHandle}`
@@ -419,6 +534,40 @@ function FlowEditor({ nodes, setNodes, edges, setEdges, onNodeSelect, subgraphs,
         externalOutputs[key] = { type: sourceNode?.data.outputs?.[e.sourceHandle]?.type || 'Any' }
       }
     })
+    
+    // If inside a subgraph, also preserve pass-through connections from parent
+    if (editPath.length > 0) {
+      const currentSubgraphId = editPath[editPath.length - 1]
+      const parentNodes = editPath.length === 1 ? nodes : 
+        (subgraphs.find(s => s.id === editPath[editPath.length - 2])?.nodes || [])
+      const currentSubgraphNode = parentNodes.find(n => n.id === currentSubgraphId)
+      
+      // Check parent subgraph's exposed inputs - if they map to selected nodes, preserve them
+      Object.entries(currentSubgraphNode?.data?.inputs || {}).forEach(([handle, def]) => {
+        const lastUnderscore = handle.lastIndexOf('_')
+        if (lastUnderscore > 0) {
+          const nodeId = handle.substring(0, lastUnderscore)
+          const portName = handle.substring(lastUnderscore + 1)
+          if (selectedIds.has(nodeId)) {
+            const key = `${nodeId}_${portName}`
+            if (!externalInputs[key]) externalInputs[key] = { type: def.type }
+          }
+        }
+      })
+      
+      // Check parent subgraph's exposed outputs - if they map to selected nodes, preserve them
+      Object.entries(currentSubgraphNode?.data?.outputs || {}).forEach(([handle, def]) => {
+        const lastUnderscore = handle.lastIndexOf('_')
+        if (lastUnderscore > 0) {
+          const nodeId = handle.substring(0, lastUnderscore)
+          const portName = handle.substring(lastUnderscore + 1)
+          if (selectedIds.has(nodeId)) {
+            const key = `${nodeId}_${portName}`
+            if (!externalOutputs[key]) externalOutputs[key] = { type: def.type }
+          }
+        }
+      })
+    }
 
     selectedNodeData.forEach(node => {
       if (node.type === 'custom') {
@@ -437,6 +586,29 @@ function FlowEditor({ nodes, setNodes, edges, setEdges, onNodeSelect, subgraphs,
       }
     })
 
+    // Helper to get Y position of a port
+    const getPortY = (handle, isInput) => {
+      const lastUnderscore = handle.lastIndexOf('_')
+      const nodeId = handle.substring(0, lastUnderscore)
+      const portName = handle.substring(lastUnderscore + 1)
+      const node = selectedNodeData.find(n => n.id === nodeId)
+      if (!node) return 0
+      
+      const ports = isInput ? Object.keys(node.data?.inputs || {}) : Object.keys(node.data?.outputs || {})
+      const portIndex = ports.indexOf(portName)
+      const rowHeight = 28
+      return node.position.y + (portIndex * rowHeight)
+    }
+    
+    // Sort inputs and outputs by Y position
+    const sortedInputs = Object.entries(externalInputs)
+      .sort((a, b) => getPortY(a[0], true) - getPortY(b[0], true))
+    const sortedOutputs = Object.entries(externalOutputs)
+      .sort((a, b) => getPortY(a[0], false) - getPortY(b[0], false))
+    
+    const sortedInputsObj = Object.fromEntries(sortedInputs)
+    const sortedOutputsObj = Object.fromEntries(sortedOutputs)
+
     const avgX = selectedNodeData.reduce((sum, n) => sum + n.position.x, 0) / selectedNodeData.length
     const avgY = selectedNodeData.reduce((sum, n) => sum + n.position.y, 0) / selectedNodeData.length
 
@@ -446,7 +618,7 @@ function FlowEditor({ nodes, setNodes, edges, setEdges, onNodeSelect, subgraphs,
       id: subgraphId,
       type: 'subgraph',
       position: { x: avgX, y: avgY },
-      data: { label: name, nodeCount: selectedNodeData.length, inputs: externalInputs, outputs: externalOutputs }
+      data: { label: name, nodeCount: selectedNodeData.length, inputs: sortedInputsObj, outputs: sortedOutputsObj }
     }
 
     // Add new subgraph to registry
@@ -469,7 +641,7 @@ function FlowEditor({ nodes, setNodes, edges, setEdges, onNodeSelect, subgraphs,
     updateCurrentContext(newNodes, newEdges)
     setSelectedIds(new Set())
     setShowNameDialog(false)
-  }, [selectedIds, currentContext, updateCurrentContext, setSubgraphs])
+  }, [selectedIds, currentContext, updateCurrentContext, setSubgraphs, editPath, nodes, subgraphs])
 
   const navigateBack = useCallback(() => {
     if (editPath.length === 0) return
