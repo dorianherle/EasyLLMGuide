@@ -52,3 +52,4 @@ Quick bloat-scan checklist (next pass)
 - Frontend panels/styles: check App.css for unused styles, React components for dead props/handlers.
 
 
+

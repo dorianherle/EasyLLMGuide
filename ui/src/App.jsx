@@ -1,11 +1,14 @@
 import { useState, useCallback, useEffect, useRef, useMemo } from 'react'
+import { useNavigate } from 'react-router-dom'
 import FlowEditor from './components/FlowEditor'
 import NodeLibrary from './components/NodeLibrary'
 import CodePanel from './components/CodePanel'
 import LogPanel from './components/LogPanel'
 import RunPanel from './components/RunPanel'
+import ChatInterface from './components/ChatInterface'
 import ResizeHandle from './components/ResizeHandle'
-import { getNodes, saveGraph, runGraph, connectWebSocket, sendInputResponse, getExamples, getExample, exportGraph, uploadNodeFiles, clearCustomNodes } from './utils/api'
+import GlobalVariablesPanel from './components/GlobalVariablesPanel'
+import { getNodes, saveGraph, runGraph, connectWebSocket, sendInputResponse, getExamples, getExample, exportGraph, uploadNodeFiles, clearCustomNodes, getApplications, setApplication } from './utils/api'
 
 const STORAGE_KEY = 'easyLLMGuide_graph'
 
@@ -21,9 +24,9 @@ function loadFromStorage() {
 }
 
 // Save state to localStorage
-function saveToStorage(nodes, edges, subgraphs, folderPath) {
+function saveToStorage(nodes, edges, subgraphs, folderPath, application, loadedApplications, globalVariables) {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({ nodes, edges, subgraphs, folderPath }))
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ nodes, edges, subgraphs, folderPath, application, loadedApplications, globalVariables }))
   } catch {}
 }
 
@@ -110,10 +113,13 @@ function normalizeGraph(nodes, edges, subgraphs = [], existingNodes = []) {
 }
 
 function App() {
+  const navigate = useNavigate()
+  
   // Load initial state from localStorage
   const savedState = loadFromStorage()
   
   const [selectedNode, setSelectedNode] = useState(null)
+  const [selectedNodeInstance, setSelectedNodeInstance] = useState(null)
   const [nodes, setNodes] = useState(savedState?.nodes || [])
   const [edges, setEdges] = useState(savedState?.edges || [])
   const [subgraphs, setSubgraphs] = useState(savedState?.subgraphs || [])
@@ -127,6 +133,13 @@ function App() {
   const [connected, setConnected] = useState(false)
   const [examplesList, setExamplesList] = useState({})
   const [folderPath, setFolderPath] = useState(savedState?.folderPath || null)
+  const [applications, setApplications] = useState([])
+  const [currentApplication, setCurrentApplication] = useState(savedState?.application || null)
+  const [loadedApplications, setLoadedApplications] = useState(
+    savedState?.loadedApplications || (savedState?.application ? [savedState.application] : [])
+  )
+  const [globalVariables, setGlobalVariables] = useState(savedState?.globalVariables || [])
+  const [showGlobalVariables, setShowGlobalVariables] = useState(false)
   
   // Run panel state
   const [showRunPanel, setShowRunPanel] = useState(false)
@@ -137,6 +150,10 @@ function App() {
   const [selectedPacketData, setSelectedPacketData] = useState(null)  // packet data to show in code panel
   const [runError, setRunError] = useState(null)
   const [activeSubgraphs, setActiveSubgraphs] = useState(new Set())  // subgraphs with data inside
+  
+  // Interface state (for chat interfaces etc)
+  const [activeInterface, setActiveInterface] = useState(null)
+  const [interfaceMessages, setInterfaceMessages] = useState([])
   
   // Helper to sync ref to state (creates new object for React change detection)
   const syncEdgePackets = () => setEdgePackets({ ...edgePacketsRef.current })
@@ -151,32 +168,74 @@ function App() {
 
   // Save to localStorage whenever state changes
   useEffect(() => {
-    saveToStorage(nodes, edges, subgraphs, folderPath)
-  }, [nodes, edges, subgraphs, folderPath])
+    saveToStorage(nodes, edges, subgraphs, folderPath, currentApplication, loadedApplications, globalVariables)
+  }, [nodes, edges, subgraphs, folderPath, currentApplication, loadedApplications, globalVariables])
+
+  // Poll localStorage for changes (when AppPage modifies the graph)
+  useEffect(() => {
+    const checkForUpdates = () => {
+      const saved = loadFromStorage()
+      if (saved) {
+        // Check if nodes, edges, or subgraphs have changed
+        const nodesChanged = JSON.stringify(saved.nodes || []) !== JSON.stringify(nodes)
+        const edgesChanged = JSON.stringify(saved.edges || []) !== JSON.stringify(edges)
+        const subgraphsChanged = JSON.stringify(saved.subgraphs || []) !== JSON.stringify(subgraphs)
+
+        if (nodesChanged || edgesChanged || subgraphsChanged) {
+          setNodes(saved.nodes || [])
+          setEdges(saved.edges || [])
+          setSubgraphs(saved.subgraphs || [])
+        }
+      }
+    }
+
+    // Check every 500ms
+    const interval = setInterval(checkForUpdates, 500)
+    return () => clearInterval(interval)
+  }, [nodes, edges, subgraphs])
 
   useEffect(() => {
-    getNodes().then(data => {
-      setNodeSpecs(data)
-      setConnected(true)
-    }).catch(() => setConnected(false))
+    getApplications().then(apps => {
+      setApplications(apps)
+      if (apps.length > 0 && !currentApplication) {
+        setCurrentApplication(apps[0])
+      }
+    }).catch(() => {})
     getExamples().then(setExamplesList).catch(() => {})
   }, [])
+
+  useEffect(() => {
+    const loadAllNodes = async () => {
+      const data = await getNodes()
+      setNodeSpecs(data)
+      setConnected(true)
+    }
+    
+    loadAllNodes().catch(() => setConnected(false))
+  }, [])
+
+  const handleApplicationChange = async (app) => {
+    setCurrentApplication(app)
+    if (app && !loadedApplications.includes(app)) {
+      setLoadedApplications([...loadedApplications, app])
+    }
+  }
 
   const handleFolderChange = useCallback(async (folderName, files) => {
     if (!folderName || !files) {
       // Clear custom nodes
       await clearCustomNodes()
       setFolderPath(null)
-      const data = await getNodes()
+      const data = await getNodes(currentApplication)
       setNodeSpecs(data)
     } else {
       // Upload files and reload nodes
       await uploadNodeFiles(files)
       setFolderPath(folderName)
-      const data = await getNodes()
+      const data = await getNodes(currentApplication)
       setNodeSpecs(data)
     }
-  }, [])
+  }, [currentApplication])
 
   // Need access to current state in websocket handler
   const edgesRef = useRef(edges)
@@ -206,7 +265,50 @@ function App() {
 
   useEffect(() => {
     const ws = connectWebSocket((msg) => {
-      if (msg.type === 'trigger_available') {
+      if (msg.type === 'interface_available') {
+        // New interface system - chat, forms, etc.
+        // Group by chat_id - multiple nodes with same chat_id share one interface
+        const chatId = msg.data?.chat_id || 'default'
+        const nodeId = msg.data?.node_id
+        
+        setActiveInterface(prev => {
+          if (prev && prev.chatId === chatId) {
+            // Same chat_id - add this node to the list
+            const nodeIds = prev.nodeIds || [prev.nodeId]
+            if (!nodeIds.includes(nodeId)) {
+              return { ...prev, nodeIds: [...nodeIds, nodeId] }
+            }
+            return prev
+          }
+          // New chat_id - create new interface
+          return {
+            chatId,
+            nodeId,
+            nodeIds: [nodeId],
+            interfaceType: msg.data?.interface_type,
+            participants: msg.data?.participants || [],
+            inputs: msg.data?.inputs || [],
+            outputs: msg.data?.outputs || []
+          }
+        })
+        // Only clear messages if it's a new chat
+        setActiveInterface(prev => {
+          if (!prev || prev.chatId !== chatId) {
+            setInterfaceMessages([])
+          }
+          return prev
+        })
+      } else if (msg.type === 'interface_display') {
+        // Data arrived at an interface input - display it
+        const input = msg.data?.input
+        const value = msg.data?.value
+        const chatId = msg.data?.chat_id || 'default'
+        // Only show if this is for the active chat interface
+        if (input?.includes('display') || input?.includes('bot')) {
+          setInterfaceMessages(prev => [...prev, { role: 'bot', content: value }])
+        }
+      } else if (msg.type === 'trigger_available') {
+        // Regular triggers (terminal input)
         setAvailableTriggers(prev => {
           if (prev.some(p => p.nodeId === msg.data?.node_id)) return prev
           return [...prev, {
@@ -353,6 +455,7 @@ function App() {
   }, [])
 
   const handleNodeSelect = useCallback((node) => {
+    setSelectedNodeInstance(node)
     const spec = nodeSpecs.find(s => s.name === node.data.label)
     if (spec) {
       setSelectedNode(spec)
@@ -360,6 +463,20 @@ function App() {
       if (!showCode) setShowCode(true)
     }
   }, [nodeSpecs, showCode])
+
+  const handleNodeUpdate = useCallback((nodeId, newData) => {
+    setNodes(prev => prev.map(n => {
+      if (n.id === nodeId) {
+        return { ...n, data: { ...n.data, ...newData } }
+      }
+      return n
+    }))
+    
+    // Update local selection state if needed
+    if (selectedNodeInstance?.id === nodeId) {
+      setSelectedNodeInstance(prev => ({ ...prev, data: { ...prev.data, ...newData } }))
+    }
+  }, [selectedNodeInstance])
 
   const handlePacketClick = useCallback((packets) => {
     setSelectedPacketData(packets)
@@ -388,7 +505,7 @@ function App() {
     setIsRunning(true)
     
     // Save graph
-    const result = await saveGraph(nodes, edges, subgraphs)
+    const result = await saveGraph(nodes, edges, subgraphs, globalVariables)
     if (result.errors?.length > 0) {
       setRunError(result.errors.join('\n'))
       setIsRunning(false)
@@ -406,6 +523,13 @@ function App() {
 
   const handleSubmitInput = (nodeId, value) => {
     sendInputResponse(nodeId, value)
+  }
+
+  const handleSendInterfaceMessage = (nodeId, message) => {
+    setInterfaceMessages(prev => [...prev, { role: 'user', content: message }])
+    // Send to all nodes with same chat_id
+    const nodeIds = activeInterface?.nodeIds || [nodeId]
+    nodeIds.forEach(id => sendInputResponse(id, message))
   }
 
   const handleSave = () => {
@@ -467,6 +591,27 @@ function App() {
     setSubgraphs([])
   }
 
+  const handleRemoveAllNodes = () => {
+    setNodes([])
+    setEdges([])
+    setSubgraphs([])
+  }
+
+  const handleAddNodes = async () => {
+    if (!applications || applications.length === 0) return
+    
+    const otherApps = applications.filter(app => !loadedApplications.includes(app))
+    if (otherApps.length === 0) {
+      alert('All applications are already loaded')
+      return
+    }
+    
+    const selectedApp = prompt(`Select application to add nodes from:\n${otherApps.join(', ')}`)
+    if (!selectedApp || !otherApps.includes(selectedApp)) return
+    
+    setLoadedApplications([...loadedApplications, selectedApp])
+  }
+
   const handleLoadExample = async (key) => {
     const data = await getExample(key)
     if (data && !data.error) {
@@ -478,7 +623,9 @@ function App() {
 
   const handleCloseRunPanel = () => {
     setShowRunPanel(false)
+    setActiveInterface(null)
     setAvailableTriggers([])
+    setInterfaceMessages([])
     edgePacketsRef.current = {}
     syncEdgePackets()
     setTerminalOutputs([])
@@ -523,7 +670,19 @@ function App() {
     <div className="app">
       {showLibrary && (
         <>
-          <NodeLibrary specs={nodeSpecs} onCollapse={() => setShowLibrary(false)} folderPath={folderPath} onFolderChange={handleFolderChange} style={{ width: libraryWidth }} />
+          <NodeLibrary 
+            specs={nodeSpecs} 
+            onCollapse={() => setShowLibrary(false)} 
+            folderPath={folderPath} 
+            onFolderChange={handleFolderChange} 
+            style={{ width: libraryWidth }}
+            applications={applications}
+            currentApplication={currentApplication}
+            onApplicationChange={handleApplicationChange}
+            onRemoveAllNodes={handleRemoveAllNodes}
+            onAddNodes={handleAddNodes}
+            loadedApplications={loadedApplications}
+          />
           <ResizeHandle side="left" onResize={handleLibraryResize} />
         </>
       )}
@@ -540,6 +699,7 @@ function App() {
             <button onClick={() => importInputRef.current?.click()}>Import</button>
             <button onClick={handleClear} className="clear-btn">Clear</button>
             <button onClick={handleExport} className="export-btn">📤 Export</button>
+            <button onClick={() => navigate('/app')} className="launch-btn">🚀 App</button>
             <input ref={fileInputRef} type="file" accept=".json" onChange={handleLoad} style={{ display: 'none' }} />
             <input ref={importInputRef} type="file" accept=".json" onChange={handleImport} style={{ display: 'none' }} />
           </div>
@@ -551,9 +711,10 @@ function App() {
               ))}
             </select>
           </div>
-          {runError && <span className="run-error">{runError}</span>}
+          {runError && <span className="run-error" onClick={() => alert(runError)} title="Click to see full error">{runError}</span>}
           <div className="toolbar-spacer" />
           {!connected && <span className="connection-error">⚠ Backend not connected</span>}
+          <button onClick={() => setShowGlobalVariables(true)} className="toggle-btn" title="Global Variables">⚙️</button>
           <button onClick={() => setShowLog(!showLog)} className={showLog ? 'toggle-btn active' : 'toggle-btn'}>📋</button>
           {!showCode && <button onClick={() => setShowCode(true)} className="toggle-btn">{'</>'}</button>}
         </div>
@@ -584,6 +745,15 @@ function App() {
             isRunning={isRunning}
           />
         )}
+        
+        {activeInterface && activeInterface.interfaceType === 'chat' && (
+          <ChatInterface
+            interfaceData={activeInterface}
+            messages={interfaceMessages}
+            onSendMessage={handleSendInterfaceMessage}
+            onClose={() => setActiveInterface(null)}
+          />
+        )}
       </div>
       
       {showLog && (
@@ -595,8 +765,23 @@ function App() {
       {showCode && (
         <>
           <ResizeHandle side="right" onResize={handleCodeResize} />
-          <CodePanel node={selectedNode} packetData={selectedPacketData} onCollapse={() => setShowCode(false)} style={{ width: codeWidth }} />
+          <CodePanel 
+            node={selectedNode} 
+            nodeInstance={selectedNodeInstance}
+            onNodeUpdate={handleNodeUpdate}
+            packetData={selectedPacketData} 
+            onCollapse={() => setShowCode(false)} 
+            style={{ width: codeWidth }}
+            globalVariables={globalVariables}
+          />
         </>
+      )}
+      {showGlobalVariables && (
+        <GlobalVariablesPanel
+          variables={globalVariables}
+          onSave={setGlobalVariables}
+          onClose={() => setShowGlobalVariables(false)}
+        />
       )}
     </div>
   )

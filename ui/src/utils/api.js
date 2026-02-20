@@ -1,9 +1,26 @@
 const API_URL = 'http://localhost:8000'
 const WS_URL = 'ws://localhost:8000'
 
-export async function getNodes() {
-  const res = await fetch(`${API_URL}/nodes`)
+export async function getApplications() {
+  const res = await fetch(`${API_URL}/applications`)
+  if (!res.ok) throw new Error('Failed to fetch applications')
+  return res.json()
+}
+
+export async function getNodes(application) {
+  const url = application ? `${API_URL}/nodes?application=${application}` : `${API_URL}/nodes`
+  const res = await fetch(url)
   if (!res.ok) throw new Error('Failed to fetch nodes')
+  return res.json()
+}
+
+export async function setApplication(application) {
+  const res = await fetch(`${API_URL}/set-application`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ application })
+  })
+  if (!res.ok) throw new Error('Failed to set application')
   return res.json()
 }
 
@@ -118,17 +135,26 @@ export function expandSubgraphs(nodes, edges, subgraphs) {
   return { nodes: expandedNodes, edges: expandedEdges }
 }
 
-export async function saveGraph(nodes, edges, subgraphs = []) {
+export async function saveGraph(nodes, edges, subgraphs = [], globalVariables = []) {
   const { nodes: expandedNodes, edges: expandedEdges } = expandSubgraphs(nodes, edges, subgraphs)
   
   const graphDef = {
-    instances: expandedNodes.map(n => ({ id: n.id, type: n.data.label })),
+    instances: expandedNodes.map(n => ({
+      id: n.id,
+      type: n.data.label,
+      defaults: n.data.defaults || {},
+      globalBindings: n.data.globalBindings || {}
+    })),
     edges: expandedEdges.map(e => ({
       source: e.source,
       sourceHandle: e.sourceHandle,
       target: e.target,
       targetHandle: e.targetHandle
-    }))
+    })),
+    globalVariables: globalVariables.reduce((acc, v) => {
+      acc[v.name] = v.value
+      return acc
+    }, {})
   }
   
   const res = await fetch(`${API_URL}/graph`, {
@@ -200,9 +226,27 @@ export async function getExample(key) {
   return res.json()
 }
 
+export async function updateNodeCode(nodeName, code) {
+  const res = await fetch(`${API_URL}/update-node-code`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ node_name: nodeName, code: code })
+  })
+  if (!res.ok) throw new Error('Failed to update node code')
+  return res.json()
+}
+
+export function getGraph() {
+  const saved = localStorage.getItem('easyLLMGuide_graph')
+  if (!saved) {
+    return { nodes: [], edges: [], subgraphs: [], globalVariables: {} }
+  }
+  return JSON.parse(saved)
+}
+
 export async function exportGraph(nodes, edges, subgraphs = []) {
   const { nodes: expandedNodes, edges: expandedEdges } = expandSubgraphs(nodes, edges, subgraphs)
-  
+
   const graphDef = {
     instances: expandedNodes.map(n => ({ id: n.id, type: n.data.label })),
     edges: expandedEdges.map(e => ({
@@ -212,7 +256,7 @@ export async function exportGraph(nodes, edges, subgraphs = []) {
       targetHandle: e.targetHandle
     }))
   }
-  
+
   const res = await fetch(`${API_URL}/export`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

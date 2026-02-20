@@ -5,6 +5,7 @@ Node specifications for the example nodes.
 from typing import Any
 from core.spec_models import NodeSpec, InputDef, OutputDef
 from examples import basic_nodes
+from examples_llm import llm_nodes
 
 
 EXAMPLE_NODES = [
@@ -159,4 +160,4 @@ EXAMPLE_NODES = [
         outputs={"out": OutputDef(type=int)},
         func=basic_nodes.passthrough
     ),
-]
+] + llm_nodes.NODES

@@ -3,6 +3,66 @@ LLM-related node definitions for testing custom folder loading.
 """
 
 from core.spec_models import NodeSpec, InputDef, OutputDef
+import os
+
+
+def gemini_chat(api_key: str, system_prompt: str, user_message: str, schema: str) -> dict:
+    """Call Gemini API with structured output support."""
+    import json
+    from google import genai
+    
+    client = genai.Client(api_key=api_key)
+    
+    # Build the prompt
+    full_prompt = f"{system_prompt}\n\nUser: {user_message}"
+    
+    # Build config
+    config = {}
+    if schema:
+        schema_dict = json.loads(schema)
+        config["response_mime_type"] = "application/json"
+        config["response_json_schema"] = schema_dict
+    
+    response = client.models.generate_content(
+        model="gemini-2.0-flash",
+        contents=full_prompt,
+        config=config if config else None
+    )
+    
+    text = response.text
+    
+    # Parse JSON if schema was given
+    parsed = None
+    if schema:
+        try:
+            parsed = json.loads(text)
+        except:
+            pass
+    
+    return {"response": text, "parsed": parsed}
+
+
+async def chat_node(chat_id: str, message: str = None):
+    """
+    Simple chat node - connects to a chat UI component.
+    - Input: message (send to UI) and chat_id parameter
+    - Output: user_message (receive from UI)
+    """
+    if message:
+        # Send message to chat UI
+        from core.server import notify_clients
+        await notify_clients({
+            "type": "ui_update",
+            "data": {
+                "chat_id": chat_id,
+                "input": "bot_message",
+                "value": message
+            }
+        })
+        yield ("sent", True)
+
+    # Always output the message (whether from graph input or external trigger)
+    yield ("user_message", message or "")
 
 
 def prompt_template(template: str, variables: str) -> dict:
@@ -46,6 +106,34 @@ def text_joiner(texts: list, separator: str) -> dict:
 
 
 NODES = [
+    NodeSpec(
+        name="gemini_chat",
+        category="LLM",
+        inputs={
+            "api_key": InputDef(type=str),
+            "system_prompt": InputDef(type=str),
+            "user_message": InputDef(type=str),
+            "schema": InputDef(type=str, default=""),
+        },
+        outputs={
+            "response": OutputDef(type=str),
+            "parsed": OutputDef(type=dict),
+        },
+        func=gemini_chat,
+    ),
+    NodeSpec(
+        name="chat",
+        category="UI",
+        inputs={
+            "chat_id": InputDef(type=str),
+            "message": InputDef(type=str),
+        },
+        outputs={
+            "user_message": OutputDef(type=str),
+        },
+        func=chat_node,
+        interface_type="ui",
+    ),
     NodeSpec(
         name="prompt_template",
         category="LLM",

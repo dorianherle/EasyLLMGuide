@@ -358,6 +358,7 @@ function FlowEditor({ nodes, setNodes, edges, setEdges, onNodeSelect, subgraphs,
       let className = ''
       if (n.id === highlightedNode) className = 'highlighted'
       else if (n.type === 'subgraph' && activeSubgraphs.has(n.id)) className = 'subgraph-active'
+      else if (n.data?.nodeType?.startsWith('ui_')) className = 'ui-node'
       return { ...n, selected: selectedIds.has(n.id), className }
     }))
     
@@ -744,15 +745,21 @@ function FlowEditor({ nodes, setNodes, edges, setEdges, onNodeSelect, subgraphs,
     event.preventDefault()
     const data = event.dataTransfer.getData('application/json')
     if (!data || !reactFlowInstance.current) return
-    
+
     const spec = JSON.parse(data)
+
+    // Don't allow dropping UI nodes - they should be created through the App page
+    if (spec.interface_type === 'ui' || spec.name === 'chat') {
+      return
+    }
+
     const position = reactFlowInstance.current.screenToFlowPosition({
       x: event.clientX,
       y: event.clientY
     })
     position.x -= 90
     position.y -= 30
-    
+
     // Count existing nodes of this type for sequential ID
     const count = currentContext.nodes.filter(n => n.data.label === spec.name).length
     const newNode = {
@@ -761,7 +768,7 @@ function FlowEditor({ nodes, setNodes, edges, setEdges, onNodeSelect, subgraphs,
       position,
       data: { label: spec.name, inputs: spec.inputs, outputs: spec.outputs }
     }
-    
+
     updateCurrentContext([...currentContext.nodes, newNode], null)
   }, [currentContext, updateCurrentContext])
 

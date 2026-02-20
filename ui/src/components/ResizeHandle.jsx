@@ -38,3 +38,4 @@ function ResizeHandle({ side, onResize }) {
 
 export default ResizeHandle
 
+
